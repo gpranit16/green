@@ -6,6 +6,18 @@ import PolicePortal from './PolicePortal';
 
 const TOTAL_FRAMES = 80;
 const FRAME_PATH = '/frames/Flow_delpmaspu__';
+const CONFIGURED_API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const API_FALLBACK_BASES = Array.from(
+  new Set([
+    CONFIGURED_API_BASE,
+    'http://localhost:5050',
+    'http://localhost:5051',
+    'http://localhost:5052',
+    'http://localhost:5053',
+    'http://localhost:5054',
+    'http://localhost:5055'
+  ].filter(Boolean))
+);
 
 function useFrameLoader() {
   const [images, setImages] = useState([]);
@@ -630,6 +642,7 @@ function Footer() {
 export default function App() {
   const { images, loaded, progress } = useFrameLoader();
   const { scrollY, scrollPercent } = useScrollProgress();
+  const [apiBaseUrl, setApiBaseUrl] = useState(API_FALLBACK_BASES[0] || 'http://localhost:5050');
 
   // Portal visibility
   const [showSimulation, setShowSimulation] = useState(false);
@@ -642,11 +655,30 @@ export default function App() {
   const [policeApproved, setPoliceApproved] = useState(false);
   const [requestId, setRequestId] = useState(null);
 
+  const apiFetch = useCallback(async (path, options = {}) => {
+    const candidates = [apiBaseUrl, ...API_FALLBACK_BASES.filter(base => base !== apiBaseUrl)];
+    let lastError;
+
+    for (const base of candidates) {
+      try {
+        const response = await fetch(`${base}${path}`, options);
+        if (base !== apiBaseUrl) {
+          setApiBaseUrl(base);
+        }
+        return response;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('Unable to reach backend API');
+  }, [apiBaseUrl]);
+
   // Poll for active request from the backend
   useEffect(() => {
     const fetchActiveRequest = async () => {
       try {
-        const res = await fetch('http://localhost:5050/api/request/active');
+        const res = await apiFetch('/api/request/active');
         const data = await res.json();
         if (data.success && data.data) {
           const req = data.data;
@@ -674,11 +706,11 @@ export default function App() {
     fetchActiveRequest();
     const interval = setInterval(fetchActiveRequest, 2000);
     return () => clearInterval(interval);
-  }, []);
+  }, [apiFetch]);
 
   const handleSubmitRequest = async (requestData) => {
     try {
-      const res = await fetch('http://localhost:5050/api/request', {
+      const res = await apiFetch('/api/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestData)
@@ -696,7 +728,7 @@ export default function App() {
   const handleHospitalAccept = async () => {
     if (!requestId) return;
     try {
-      await fetch(`http://localhost:5050/api/request/${requestId}/status`, {
+      await apiFetch(`/api/request/${requestId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'WAITING_POLICE' })
@@ -708,7 +740,7 @@ export default function App() {
   const handleHospitalReject = async () => {
     if (!requestId) return;
     try {
-      await fetch(`http://localhost:5050/api/request/${requestId}/status`, {
+      await apiFetch(`/api/request/${requestId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'REJECTED' })
@@ -722,7 +754,7 @@ export default function App() {
   const handlePoliceConfirm = async () => {
     if (!requestId) return;
     try {
-      await fetch(`http://localhost:5050/api/request/${requestId}/status`, {
+      await apiFetch(`/api/request/${requestId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'ASSIGNED' })
@@ -734,7 +766,7 @@ export default function App() {
   const handlePoliceCancel = async () => {
     if (!requestId) return;
     try {
-      await fetch(`http://localhost:5050/api/request/${requestId}/status`, {
+      await apiFetch(`/api/request/${requestId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'CANCELLED' })

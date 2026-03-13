@@ -12,6 +12,7 @@ dotenv.config({ path: join(__dirname, '.env') });
 
 const app = express();
 const PORT = process.env.PORT || 5050;
+const MAX_PORT_ATTEMPTS = 10;
 
 app.use(cors());
 app.use(express.json());
@@ -94,6 +95,22 @@ app.put('/api/request/:id/status', async (req, res) => {
 });
 
 // Start Server
-app.listen(PORT, () => {
-  console.log(`🚀 GreenCorridor Backend running on http://localhost:${PORT}`);
-});
+function startServer(port, attemptsLeft = MAX_PORT_ATTEMPTS) {
+  const server = app.listen(port, () => {
+    console.log(`🚀 GreenCorridor Backend running on http://localhost:${port}`);
+  });
+
+  server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE' && attemptsLeft > 0) {
+      const nextPort = Number(port) + 1;
+      console.warn(`⚠️ Port ${port} is in use. Retrying on ${nextPort}...`);
+      startServer(nextPort, attemptsLeft - 1);
+      return;
+    }
+
+    console.error('❌ Failed to start backend server:', error);
+    process.exit(1);
+  });
+}
+
+startServer(Number(PORT));
