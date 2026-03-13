@@ -1,77 +1,101 @@
-# Deploying GreenCorridor to Production 🚀
+# GreenCorridor Deployment Guide 🚀
 
-The GreenCorridor system is now a full-stack application. To deploy it so anyone on the internet can use it (e.g. for a hackathon demo or public presentation), you will need to host your **React Frontend** and your **Node.js/Express Backend** separately.
+This project is a monorepo with:
 
-Here is the easiest, completely free way to deploy both:
+- `frontend/` → Vite + React app
+- `backend/` → Node + Express + MongoDB API
 
----
-
-## 1. Prepare your Backend for Deployment
-
-Before hosting your backend, we need to make sure the frontend knows how to talk to the live server instead of `localhost:5000`.
-
-### A. Update `App.jsx` API URLs
-In your `src/App.jsx` file, you need to change all fetch requests from `http://localhost:5000` to an environment variable or a relative path (if deployed together), or directly replace it with your future live backend URL.
-
-For example, when you get your live backend URL (e.g., `https://green-corridor-api.onrender.com`), you will replace:
-```js
-fetch('http://localhost:5000/api/request')
-```
-with
-```js
-fetch('https://green-corridor-api.onrender.com/api/request')
-```
-
-*(You will need to do this for the GET, POST, and PUT requests in `App.jsx`)*
+For reliable production deployment, host backend and frontend separately.
 
 ---
 
-## 2. Deploy the Backend (Free on Render.com)
+## 1) Prerequisites
 
-[Render](https://render.com/) is currently the best free platform for hosting Node.js servers, as Heroku no longer has a free tier.
-
-**Steps:**
-1. Upload your entire project code to a new repository on **GitHub**.
-2. Go to [Render.com](https://render.com/) and sign up with GitHub.
-3. Click **New +** and select **Web Service**.
-4. Connect the GitHub repository containing your GreenCorridor code.
-5. Setup the Web Service settings:
-   - **Name**: `green-corridor-api`
-   - **Environment**: `Node`
-   - **Build Command**: `npm install`
-   - **Start Command**: `node server.js`
-6. **Critical Step (Environment Variables):**
-   - Scroll down to "Environment Variables" and add:
-     - Key: `MONGO_URI`
-     - Value: `mongodb+srv://pranit:pranit@corridor.2a0gnvi.mongodb.net/?appName=corridor`
-7. Click **Create Web Service**. 
-8. Render will deploy it within a few minutes. Copy the live URL they give you (you will need to paste this into your `App.jsx` as mentioned in Step 1).
+- GitHub repo with latest code
+- MongoDB Atlas database URI
+- (Optional) Twilio account for SMS notifications
 
 ---
 
-## 3. Deploy the Frontend (Free on Vercel)
+## 2) Deploy Backend (Render)
 
-[Vercel](https://vercel.com/) is the absolute best place to host Vite/React frontends. It is incredibly fast and completely free.
+Create a **Web Service** on Render and point it to this repo.
 
-**Steps:**
-1. Make sure you have pushed all your latest code (including the updated `App.jsx` with the Render URL) to your **GitHub** repository.
-2. Go to [Vercel.com](https://vercel.com/) and sign up with GitHub.
-3. Click **Add New** -> **Project**.
-4. Import your GreenCorridor GitHub repository.
-5. Vercel will automatically detect that you are using Vite and React.
-6. Check the root directory and settings (Vercel's default settings of Build Command: `npm run build` are perfect).
-7. Click **Deploy**.
+### Render settings
 
-Vercel will give you a live functioning URL (e.g. `https://green-corridor-app.vercel.app`). 
+- **Root Directory**: `backend`
+- **Environment**: `Node`
+- **Build Command**: `npm install`
+- **Start Command**: `npm start`
+
+### Required environment variables
+
+- `MONGO_URI=<your_mongodb_uri>`
+
+### Recommended environment variables
+
+- `PORT=5050`
+- `CORS_ORIGINS=https://<your-frontend-domain>`
+
+### Optional SMS variables (Twilio)
+
+- `SMS_PROVIDER=twilio`
+- `TWILIO_ACCOUNT_SID=...`
+- `TWILIO_AUTH_TOKEN=...`
+- `TWILIO_FROM_NUMBER=+1XXXXXXXXXX`
+   - (`TWILIO_PHONE_FROM` is also accepted for compatibility)
+
+### Health check
+
+After deploy, verify:
+
+- `https://<your-backend-domain>/api/health`
+
+Should return JSON with `success: true`.
 
 ---
 
-## 4. Final Security Check (CORS)
+## 3) Deploy Frontend (Vercel)
 
-Currently, your `server.js` has `app.use(cors());` which allows any website to talk to your API. Before a live production launch, you would restrict this to only allow your Vercel URL, but for a hackathon, `app.use(cors())` is perfect and prevents cross-origin errors!
+Create a **Project** on Vercel using the same repo.
 
-### Testing the Live System
-1. Go to your Vercel URL on your phone or laptop.
-2. Request an ambulance.
-3. Open a second tab to your Vercel URL and click the Hospital Portal.
-4. If they sync instantly just like they did on your local computer, **your deployment was a 100% success!**
+### Vercel settings
+
+- **Root Directory**: `frontend`
+- **Framework Preset**: `Vite`
+- **Build Command**: `npm run build`
+- **Output Directory**: `dist`
+
+### Frontend environment variables
+
+- `VITE_API_BASE_URL=https://<your-backend-domain>`
+
+Then deploy.
+
+---
+
+## 4) Post-deploy verification checklist
+
+1. Open frontend URL
+2. Submit ambulance request
+3. Open `#hospital` portal and verify incoming request appears
+4. Accept in hospital, then open `#police` and confirm escort
+5. Verify status lifecycle updates and records in both portals
+6. Refresh on `#hospital` / `#police` and confirm portal state remains accessible
+
+---
+
+## 5) Production notes
+
+- API fallback in frontend tries nearby localhost ports in dev, but in production always set `VITE_API_BASE_URL`.
+- Keep `.env` files out of git.
+- Regenerate any keys that were ever shared publicly.
+- If SMS is not needed, leave `SMS_PROVIDER` unset.
+
+---
+
+## 6) Common issues
+
+- **No data / inconsistent records**: frontend pointing to wrong backend URL → fix `VITE_API_BASE_URL`
+- **CORS errors**: missing frontend domain in `CORS_ORIGINS`
+- **SMS not sending**: provider vars incomplete or invalid Twilio credentials

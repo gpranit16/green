@@ -654,6 +654,8 @@ export default function App() {
   const [hospitalApproved, setHospitalApproved] = useState(false);
   const [policeApproved, setPoliceApproved] = useState(false);
   const [requestId, setRequestId] = useState(null);
+  const [requestStatus, setRequestStatus] = useState(null);
+  const [requestHistory, setRequestHistory] = useState([]);
 
   const apiFetch = useCallback(async (path, options = {}) => {
     const candidates = [apiBaseUrl, ...API_FALLBACK_BASES.filter(base => base !== apiBaseUrl)];
@@ -662,6 +664,9 @@ export default function App() {
     for (const base of candidates) {
       try {
         const response = await fetch(`${base}${path}`, options);
+        if (!response.ok) {
+          throw new Error(`API ${base}${path} responded with status ${response.status}`);
+        }
         if (base !== apiBaseUrl) {
           setApiBaseUrl(base);
         }
@@ -674,6 +679,65 @@ export default function App() {
     throw lastError || new Error('Unable to reach backend API');
   }, [apiBaseUrl]);
 
+  const openPortal = useCallback((portal) => {
+    setShowSimulation(portal === 'simulation');
+    setShowHospital(portal === 'hospital');
+    setShowPolice(portal === 'police');
+    const nextHash = portal ? `#${portal}` : '';
+    if (window.location.hash !== nextHash) {
+      if (nextHash) {
+        window.location.hash = nextHash;
+      } else {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+    }
+  }, []);
+
+  const closePortals = useCallback(() => {
+    openPortal('');
+  }, [openPortal]);
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      const hash = (window.location.hash || '').replace('#', '');
+      if (hash === 'simulation' || hash === 'hospital' || hash === 'police') {
+        setShowSimulation(hash === 'simulation');
+        setShowHospital(hash === 'hospital');
+        setShowPolice(hash === 'police');
+      } else {
+        setShowSimulation(false);
+        setShowHospital(false);
+        setShowPolice(false);
+      }
+    };
+
+    syncFromHash();
+    window.addEventListener('hashchange', syncFromHash);
+    return () => window.removeEventListener('hashchange', syncFromHash);
+  }, []);
+
+  const updateRequestStatus = useCallback(async (status, { clearLocal = false } = {}) => {
+    if (!requestId) return;
+    try {
+      await apiFetch(`/api/request/${requestId}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+
+      setRequestStatus(status);
+
+      if (clearLocal) {
+        setPendingRequest(null);
+        setHospitalApproved(false);
+        setPoliceApproved(false);
+        setRequestId(null);
+      }
+    } catch (err) {
+      console.error(`Failed to update request status to ${status}:`, err);
+    }
+  }, [apiFetch, requestId]);
+
   // Poll for active request from the backend
   useEffect(() => {
     const fetchActiveRequest = async () => {
@@ -683,6 +747,7 @@ export default function App() {
         if (data.success && data.data) {
           const req = data.data;
           setRequestId(req._id);
+          setRequestStatus(req.status);
           setPendingRequest({
             location: req.location,
             condition: req.condition,
@@ -697,6 +762,19 @@ export default function App() {
           setHospitalApproved(false);
           setPoliceApproved(false);
           setRequestId(null);
+          setRequestStatus(null);
+        }
+      } catch (err) {
+        // Silent fail if backend isn't up
+      }
+    };
+
+    const fetchHistory = async () => {
+      try {
+        const res = await apiFetch('/api/request/history?limit=40');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.data)) {
+          setRequestHistory(data.data);
         }
       } catch (err) {
         // Silent fail if backend isn't up
@@ -704,8 +782,13 @@ export default function App() {
     };
     
     fetchActiveRequest();
-    const interval = setInterval(fetchActiveRequest, 2000);
-    return () => clearInterval(interval);
+    fetchHistory();
+    const activeInterval = setInterval(fetchActiveRequest, 2000);
+    const historyInterval = setInterval(fetchHistory, 5000);
+    return () => {
+      clearInterval(activeInterval);
+      clearInterval(historyInterval);
+    };
   }, [apiFetch]);
 
   const handleSubmitRequest = async (requestData) => {
@@ -721,58 +804,67 @@ export default function App() {
         setPendingRequest(requestData);
         setHospitalApproved(false);
         setPoliceApproved(false);
+        setRequestStatus('WAITING_HOSPITAL');
       }
     } catch (err) { console.error('Failed to submit request to database:', err); }
   };
 
   const handleHospitalAccept = async () => {
-    if (!requestId) return;
-    try {
-      await apiFetch(`/api/request/${requestId}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'WAITING_POLICE' })
-      });
-      setHospitalApproved(true);
-    } catch (err) { console.error('Failed to approve hospital:', err); }
+    await updateRequestStatus('WAITING_POLICE');
+    setHospitalApproved(true);
   };
 
   const handleHospitalReject = async () => {
-    if (!requestId) return;
-    try {
-      await apiFetch(`/api/request/${requestId}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'REJECTED' })
-      });
-      setPendingRequest(null);
-      setHospitalApproved(false);
-      setPoliceApproved(false);
-    } catch (err) { console.error('Failed to reject hospital:', err); }
+    await updateRequestStatus('REJECTED', { clearLocal: true });
   };
 
   const handlePoliceConfirm = async () => {
-    if (!requestId) return;
-    try {
-      await apiFetch(`/api/request/${requestId}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'ASSIGNED' })
-      });
-      setPoliceApproved(true);
-    } catch (err) { console.error('Failed to confirm police:', err); }
+    await updateRequestStatus('ASSIGNED');
+    setPoliceApproved(true);
   };
 
   const handlePoliceCancel = async () => {
-    if (!requestId) return;
+    await updateRequestStatus('CANCELLED', { clearLocal: true });
+    setPoliceApproved(false);
+  };
+
+  const handleTrackingStarted = async () => {
+    await updateRequestStatus('TRACKING');
+  };
+
+  const handleJourneyArrived = async () => {
+    await updateRequestStatus('ARRIVED', { clearLocal: true });
+  };
+
+  const handleClearActiveRequests = async () => {
     try {
-      await apiFetch(`/api/request/${requestId}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'CANCELLED' })
-      });
+      await apiFetch('/api/request/clear-active', { method: 'POST' });
+      setPendingRequest(null);
+      setHospitalApproved(false);
       setPoliceApproved(false);
-    } catch (err) { console.error('Failed to cancel police:', err); }
+      setRequestId(null);
+      setRequestStatus(null);
+    } catch (err) {
+      console.error('Failed to clear active requests:', err);
+    }
+  };
+
+  const handleClearHistory = async (scope = 'terminal') => {
+    try {
+      await apiFetch('/api/request/clear-history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope })
+      });
+
+      if (scope === 'all') {
+        setRequestHistory([]);
+      } else {
+        setRequestHistory((prev) => prev.filter(item => !['ARRIVED', 'REJECTED', 'CANCELLED'].includes(item.status)));
+      }
+    } catch (err) {
+      console.error('Failed to clear history records:', err);
+    }
   };
 
   return (
@@ -783,20 +875,20 @@ export default function App() {
 
       <Navbar
         scrollPercent={scrollPercent}
-        onOpenHospital={() => setShowHospital(true)}
-        onOpenPolice={() => setShowPolice(true)}
+        onOpenHospital={() => openPortal('hospital')}
+        onOpenPolice={() => openPortal('police')}
       />
 
       <main>
-        <HeroSection scrollY={scrollY} onRequestAmbulance={() => setShowSimulation(true)} />
+        <HeroSection scrollY={scrollY} onRequestAmbulance={() => openPortal('simulation')} />
         <FrameAnimationSection images={images} loaded={loaded} />
         <ChallengeSection />
         <CorridorSection />
         <ImpactSection />
         <PortalsSection
-          onOpenSimulation={() => setShowSimulation(true)}
-          onOpenHospital={() => setShowHospital(true)}
-          onOpenPolice={() => setShowPolice(true)}
+          onOpenSimulation={() => openPortal('simulation')}
+          onOpenHospital={() => openPortal('hospital')}
+          onOpenPolice={() => openPortal('police')}
         />
         <FinaleSection images={images} loaded={loaded} />
       </main>
@@ -806,28 +898,38 @@ export default function App() {
       {/* ── Portals ── */}
       <AmbulanceSimulation
         isOpen={showSimulation}
-        onClose={() => setShowSimulation(false)}
+        onClose={closePortals}
         onSubmitRequest={handleSubmitRequest}
         hospitalApproved={hospitalApproved}
         policeApproved={policeApproved}
         pendingRequest={pendingRequest}
+        onTrackingStarted={handleTrackingStarted}
+        onArrived={handleJourneyArrived}
       />
 
       <HospitalPortal
         isOpen={showHospital}
-        onClose={() => setShowHospital(false)}
+        onClose={closePortals}
         pendingRequest={pendingRequest}
+        requestStatus={requestStatus}
+        requestHistory={requestHistory}
         onAccept={handleHospitalAccept}
         onReject={handleHospitalReject}
+        onClearActive={handleClearActiveRequests}
+        onClearHistory={handleClearHistory}
       />
 
       <PolicePortal
         isOpen={showPolice}
-        onClose={() => setShowPolice(false)}
+        onClose={closePortals}
         pendingRequest={pendingRequest}
         hospitalApproved={hospitalApproved}
+        requestStatus={requestStatus}
+        requestHistory={requestHistory}
         onConfirm={handlePoliceConfirm}
         onCancel={handlePoliceCancel}
+        onClearActive={handleClearActiveRequests}
+        onClearHistory={handleClearHistory}
       />
     </>
   );

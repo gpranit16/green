@@ -11,10 +11,12 @@ import {
 // Design: dark cinematic, indigo-blue accent
 // ═══════════════════════════════════════════════
 
-export default function PolicePortal({ isOpen, onClose, pendingRequest, hospitalApproved, onConfirm, onCancel }) {
+export default function PolicePortal({ isOpen, onClose, pendingRequest, hospitalApproved, requestStatus, requestHistory = [], onConfirm, onCancel, onClearActive, onClearHistory }) {
   const [confirmed, setConfirmed]   = useState(false);
   const [activeTab, setActiveTab]   = useState('alerts');
   const [notification, setNotif]    = useState(null);
+  const isEscortPending = Boolean(pendingRequest && requestStatus === 'WAITING_POLICE' && hospitalApproved);
+  const isEscortConfirmed = Boolean(['ASSIGNED', 'TRACKING', 'ARRIVED'].includes(requestStatus) || confirmed);
 
   useEffect(() => {
     if (isOpen) {
@@ -42,10 +44,16 @@ export default function PolicePortal({ isOpen, onClose, pendingRequest, hospital
     { id: 'units',     label: 'Patrol Units' },
   ];
 
-  const mockCorridors = [
-    { id: 'GC-1021', route: 'MG Road → Apollo Hospital', status: 'ACTIVE', eta: '3 min', signal: 8 },
-    { id: 'GC-1020', route: 'Whitefield → Manipal Hospital', status: 'COMPLETED', eta: '—', signal: 6 },
-  ];
+  const corridorHistory = requestHistory
+    .filter(item => ['WAITING_POLICE', 'ASSIGNED', 'TRACKING', 'ARRIVED', 'CANCELLED', 'REJECTED'].includes(item.status))
+    .slice(0, 12)
+    .map(item => ({
+      id: String(item._id || '').slice(-6).toUpperCase(),
+      route: `${item.location || 'Unknown pickup'} → ${item.hospital || 'Unknown hospital'}`,
+      status: item.status === 'ARRIVED' ? 'COMPLETED' : (item.status === 'TRACKING' || item.status === 'ASSIGNED' ? 'ACTIVE' : item.status),
+      eta: item.status === 'TRACKING' ? '~in transit' : (item.status === 'ARRIVED' ? 'Arrived' : '—'),
+      signal: item.status === 'TRACKING' || item.status === 'ARRIVED' ? 4 : 0,
+    }));
 
   const mockUnits = [
     { id: 'PCR-01', status: 'On Escort', location: 'Koramangala Bridge', officer: 'SI Prakash' },
@@ -106,14 +114,14 @@ export default function PolicePortal({ isOpen, onClose, pendingRequest, hospital
                 transition: 'all 0.2s',
               }}
             >
-              {tab.id === 'alerts' && hospitalApproved && !confirmed && (
+              {tab.id === 'alerts' && isEscortPending && (
                 <span style={{
                   width: 8, height: 8, borderRadius: '50%', background: '#f97316',
                   animation: 'pulse-glow 1.5s ease-in-out infinite', flexShrink: 0,
                 }} />
               )}
               {tab.label}
-              {tab.id === 'alerts' && hospitalApproved && !confirmed && (
+              {tab.id === 'alerts' && isEscortPending && (
                 <span style={{
                   marginLeft: 'auto', fontSize: '0.65rem', padding: '2px 7px',
                   borderRadius: '50px', background: 'rgba(249,115,22,0.15)',
@@ -151,7 +159,17 @@ export default function PolicePortal({ isOpen, onClose, pendingRequest, hospital
             {tabs.find(t => t.id === activeTab)?.label}
           </h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {hospitalApproved && !confirmed && (
+            <button
+              onClick={() => onClearActive && onClearActive()}
+              style={{
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
+                borderRadius: '10px', padding: '6px 12px', cursor: 'pointer',
+                color: '#fca5a5', fontSize: '0.75rem', fontWeight: 600,
+              }}
+            >
+              Clear Incoming
+            </button>
+            {isEscortPending && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '6px 14px', borderRadius: '50px',
@@ -197,7 +215,7 @@ export default function PolicePortal({ isOpen, onClose, pendingRequest, hospital
           {/* ── ALERTS TAB ── */}
           {activeTab === 'alerts' && (
             <div>
-              {hospitalApproved && pendingRequest && !confirmed ? (
+              {isEscortPending ? (
                 <div style={{
                   borderRadius: '20px', overflow: 'hidden',
                   border: '1px solid rgba(249,115,22,0.25)',
@@ -302,7 +320,7 @@ export default function PolicePortal({ isOpen, onClose, pendingRequest, hospital
                     </div>
                   </div>
                 </div>
-              ) : confirmed ? (
+              ) : isEscortConfirmed ? (
                 <div style={{
                   padding: '60px 40px', display: 'flex', flexDirection: 'column',
                   alignItems: 'center', textAlign: 'center',
@@ -368,7 +386,40 @@ export default function PolicePortal({ isOpen, onClose, pendingRequest, hospital
           {/* ── CORRIDORS TAB ── */}
           {activeTab === 'corridors' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {mockCorridors.map((c, i) => (
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => onClearHistory && onClearHistory('terminal')}
+                  style={{
+                    background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.2)',
+                    borderRadius: '10px', padding: '8px 12px', cursor: 'pointer',
+                    color: '#fdba74', fontSize: '0.75rem', fontWeight: 600,
+                  }}
+                >
+                  Clear Completed Records
+                </button>
+                <button
+                  onClick={() => onClearHistory && onClearHistory('all')}
+                  style={{
+                    background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
+                    borderRadius: '10px', padding: '8px 12px', cursor: 'pointer',
+                    color: '#fca5a5', fontSize: '0.75rem', fontWeight: 600,
+                  }}
+                >
+                  Clear All Records
+                </button>
+              </div>
+
+              {corridorHistory.length === 0 && (
+                <div style={{
+                  padding: '40px 24px', borderRadius: '16px', textAlign: 'center',
+                  background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+                  color: 'rgba(148,163,184,0.7)'
+                }}>
+                  No corridor history yet.
+                </div>
+              )}
+
+              {corridorHistory.map((c, i) => (
                 <div key={i} style={{
                   padding: '20px', borderRadius: '16px',
                   background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',

@@ -11,31 +11,32 @@ import {
 // Design: matches GreenCorridor dark cinematic system
 // ═══════════════════════════════════════════════
 
-export default function HospitalPortal({ isOpen, onClose, pendingRequest, onAccept, onReject }) {
+export default function HospitalPortal({ isOpen, onClose, pendingRequest, requestStatus, requestHistory = [], onAccept, onReject, onClearActive, onClearHistory }) {
   const [activeTab, setActiveTab]   = useState('requests');
   const [notification, setNotif]    = useState(null);
-  const [accepted, setAccepted]     = useState(false);
   const [showBell, setShowBell]     = useState(false);
+  const isPendingForHospital = Boolean(pendingRequest && requestStatus === 'WAITING_HOSPITAL');
+  const isAcceptedByHospital = Boolean(
+    pendingRequest && ['WAITING_POLICE', 'ASSIGNED', 'TRACKING', 'ARRIVED'].includes(requestStatus)
+  );
 
   // Flash notification bell when new request arrives
   useEffect(() => {
-    if (pendingRequest && !accepted) {
+    if (isPendingForHospital) {
       setShowBell(true);
       const t = setTimeout(() => setShowBell(false), 3000);
       return () => clearTimeout(t);
     }
-  }, [pendingRequest]);
+  }, [isPendingForHospital]);
 
   // Reset when portal reopens
   useEffect(() => {
     if (isOpen) {
-      setAccepted(false);
       setActiveTab('requests');
     }
   }, [isOpen]);
 
   const handleAccept = () => {
-    setAccepted(true);
     setNotif({ type: 'success', msg: 'Request accepted. Police notified automatically.' });
     onAccept && onAccept();
     setTimeout(() => setNotif(null), 4000);
@@ -59,10 +60,16 @@ export default function HospitalPortal({ isOpen, onClose, pendingRequest, onAcce
     { id: 'resources', label: 'Resources' },
   ];
 
-  const mockActive = [
-    { id: 'C-2201', condition: 'critical', eta: '2 min', nurse: 'Dr. Priya S.', bed: 'ER-3' },
-    { id: 'C-2198', condition: 'moderate', eta: 'Arrived', nurse: 'Dr. Arjun M.', bed: 'ER-7' },
-  ];
+  const historyCases = requestHistory
+    .filter(item => ['WAITING_POLICE', 'ASSIGNED', 'TRACKING', 'ARRIVED', 'REJECTED', 'CANCELLED'].includes(item.status))
+    .slice(0, 12);
+
+  const formatWhen = (isoDate) => {
+    if (!isoDate) return '—';
+    const dt = new Date(isoDate);
+    if (Number.isNaN(dt.getTime())) return '—';
+    return dt.toLocaleString();
+  };
 
   const mockResources = [
     { label: 'ICU Beds',   used: 8,  total: 12 },
@@ -124,7 +131,7 @@ export default function HospitalPortal({ isOpen, onClose, pendingRequest, onAcce
                 position: 'relative',
               }}
             >
-              {tab.id === 'requests' && pendingRequest && !accepted && (
+              {tab.id === 'requests' && isPendingForHospital && (
                 <span style={{
                   width: 8, height: 8, borderRadius: '50%',
                   background: '#ef4444',
@@ -133,7 +140,7 @@ export default function HospitalPortal({ isOpen, onClose, pendingRequest, onAcce
                 }} />
               )}
               {tab.label}
-              {tab.id === 'requests' && pendingRequest && !accepted && (
+              {tab.id === 'requests' && isPendingForHospital && (
                 <span style={{
                   marginLeft: 'auto', fontSize: '0.65rem', padding: '2px 7px',
                   borderRadius: '50px', background: 'rgba(239,68,68,0.15)',
@@ -174,7 +181,17 @@ export default function HospitalPortal({ isOpen, onClose, pendingRequest, onAcce
             </h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {pendingRequest && !accepted && (
+            <button
+              onClick={() => onClearActive && onClearActive()}
+              style={{
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
+                borderRadius: '10px', padding: '6px 12px', cursor: 'pointer',
+                color: '#fca5a5', fontSize: '0.75rem', fontWeight: 600,
+              }}
+            >
+              Clear Incoming
+            </button>
+            {isPendingForHospital && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '6px 14px', borderRadius: '50px',
@@ -222,7 +239,7 @@ export default function HospitalPortal({ isOpen, onClose, pendingRequest, onAcce
           {/* ── REQUESTS TAB ── */}
           {activeTab === 'requests' && (
             <div>
-              {pendingRequest && !accepted ? (
+              {isPendingForHospital ? (
                 <div style={{
                   borderRadius: '20px', overflow: 'hidden',
                   border: '1px solid rgba(239,68,68,0.2)',
@@ -321,7 +338,7 @@ export default function HospitalPortal({ isOpen, onClose, pendingRequest, onAcce
                     </div>
                   </div>
                 </div>
-              ) : accepted ? (
+              ) : isAcceptedByHospital ? (
                 <div style={{
                   padding: '60px 40px', display: 'flex', flexDirection: 'column',
                   alignItems: 'center', textAlign: 'center',
@@ -371,7 +388,17 @@ export default function HospitalPortal({ isOpen, onClose, pendingRequest, onAcce
           {/* ── ACTIVE CASES TAB ── */}
           {activeTab === 'active' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {mockActive.map((c, i) => (
+              {historyCases.length === 0 && (
+                <div style={{
+                  padding: '40px 24px', borderRadius: '16px', textAlign: 'center',
+                  background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+                  color: 'rgba(148,163,184,0.7)'
+                }}>
+                  No journey records yet.
+                </div>
+              )}
+
+              {historyCases.map((c, i) => (
                 <div key={i} style={{
                   padding: '20px', borderRadius: '16px',
                   background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
@@ -380,22 +407,24 @@ export default function HospitalPortal({ isOpen, onClose, pendingRequest, onAcce
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <div style={{
                         width: 10, height: 10, borderRadius: '50%',
-                        background: priorityColor[c.condition],
-                        boxShadow: `0 0 8px ${priorityColor[c.condition]}80`,
+                        background: priorityColor[c.condition] || '#64748b',
+                        boxShadow: `0 0 8px ${(priorityColor[c.condition] || '#64748b')}80`,
                       }} />
-                      <span style={{ fontFamily: 'Outfit', fontWeight: 700, fontSize: '1rem', color: '#e2e8f0' }}>#{c.id}</span>
+                      <span style={{ fontFamily: 'Outfit', fontWeight: 700, fontSize: '1rem', color: '#e2e8f0' }}>
+                        #{String(c._id || '').slice(-6).toUpperCase()}
+                      </span>
                     </div>
                     <span style={{
                       padding: '4px 12px', borderRadius: '50px', fontSize: '0.7rem', fontWeight: 600,
-                      background: `${priorityColor[c.condition]}15`, color: priorityColor[c.condition],
+                      background: `${priorityColor[c.condition] || '#64748b'}15`, color: priorityColor[c.condition] || '#64748b',
                       textTransform: 'uppercase',
-                    }}>{c.condition}</span>
+                    }}>{c.status || 'UNKNOWN'}</span>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
                     {[
-                      { label: 'ETA', value: c.eta },
-                      { label: 'Attending', value: c.nurse },
-                      { label: 'Assigned Bed', value: c.bed },
+                      { label: 'Condition', value: (c.condition || '—').toUpperCase() },
+                      { label: 'Hospital', value: c.hospital || '—' },
+                      { label: 'Updated', value: formatWhen(c.updatedAt) },
                     ].map((d, j) => (
                       <div key={j}>
                         <div style={{ fontSize: '0.65rem', color: '#64748b', marginBottom: '4px' }}>{d.label}</div>
@@ -411,6 +440,29 @@ export default function HospitalPortal({ isOpen, onClose, pendingRequest, onAcce
           {/* ── RESOURCES TAB ── */}
           {activeTab === 'resources' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => onClearHistory && onClearHistory('terminal')}
+                  style={{
+                    background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.2)',
+                    borderRadius: '10px', padding: '8px 12px', cursor: 'pointer',
+                    color: '#fdba74', fontSize: '0.75rem', fontWeight: 600,
+                  }}
+                >
+                  Clear Completed Records
+                </button>
+                <button
+                  onClick={() => onClearHistory && onClearHistory('all')}
+                  style={{
+                    background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
+                    borderRadius: '10px', padding: '8px 12px', cursor: 'pointer',
+                    color: '#fca5a5', fontSize: '0.75rem', fontWeight: 600,
+                  }}
+                >
+                  Clear All Records
+                </button>
+              </div>
+
               <div style={{
                 padding: '20px', borderRadius: '16px',
                 background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',

@@ -28,16 +28,15 @@ const TRAFFIC_SIGNALS = [
 ];
 
 // ── Hospital Options ─────────────────────────────────────────
-const HOSPITAL_OPTIONS = [
-  'Manipal Hospital, Old Airport Road',
-  'Apollo Hospital, Bannerghatta Road',
-  'Fortis Hospital, Bangalore',
-  'Narayana Health, Bommasandra',
-  'Cloudnine Hospital, Bellandur',
-  'Columbia Asia Hospital, Whitefield',
-  'Sakra World Hospital, Marathahalli',
-  'BGS Gleneagles Hospital, Kengeri',
-  'Other (type below)',
+const HOSPITAL_DATA = [
+  { name: 'Manipal Hospital, Old Airport Road', coords: [12.9597, 77.6497] },
+  { name: 'Apollo Hospital, Bannerghatta Road', coords: [12.8967, 77.5993] },
+  { name: 'Fortis Hospital, Bangalore', coords: [12.8954, 77.5976] },
+  { name: 'Narayana Health, Bommasandra', coords: [12.8238, 77.6921] },
+  { name: 'Cloudnine Hospital, Bellandur', coords: [12.9263, 77.6762] },
+  { name: 'Columbia Asia Hospital, Whitefield', coords: [12.9698, 77.7499] },
+  { name: 'Sakra World Hospital, Marathahalli', coords: [12.9282, 77.6841] },
+  { name: 'BGS Gleneagles Hospital, Kengeri', coords: [12.9032, 77.4805] },
 ];
 
 // ── Map Icons ──────────────────────────────────────────────────
@@ -98,7 +97,7 @@ const labelStyle = {
   display: 'flex', alignItems: 'center', gap: '6px',
 };
 
-export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, hospitalApproved, policeApproved, pendingRequest }) {
+export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, hospitalApproved, policeApproved, pendingRequest, onTrackingStarted, onArrived }) {
   const [phase, setPhase]             = useState(PHASE.FORM);
   const [formData, setFormData]       = useState({
     location: 'Silk Board Junction, Bangalore',
@@ -109,6 +108,9 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
     customHospital: '',
   });
   const [showCustomHospital, setShowCustomHospital] = useState(false);
+  const [nearestHospitals, setNearestHospitals] = useState(HOSPITAL_DATA.slice(0, 5));
+  const [geoLoading, setGeoLoading] = useState(false);
+  const [geoError, setGeoError] = useState('');
   const [ambulancePos, setAmbulancePos]   = useState(ROUTE_COORDS[0]);
   const [routeProgress, setRouteProgress] = useState(0);
   const [eta, setEta]                     = useState(6);
@@ -118,6 +120,22 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
   const [corridorActive, setCorridorActive] = useState(false);
   const animRef   = useRef(null);
   const progressRef = useRef(0);
+  const geoAutoAttemptedRef = useRef(false);
+
+  const getNearestHospitals = (coords) => {
+    return [...HOSPITAL_DATA]
+      .sort((a, b) => haversineDistance(coords, a.coords) - haversineDistance(coords, b.coords))
+      .slice(0, 5);
+  };
+
+  useEffect(() => {
+    const defaults = getNearestHospitals(USER_LOCATION);
+    setNearestHospitals(defaults);
+    setFormData((prev) => {
+      if (prev.hospital) return prev;
+      return { ...prev, hospital: defaults[0]?.name || '' };
+    });
+  }, []);
 
   // Reset ONLY if opening and there is NO active global request
   useEffect(() => {
@@ -134,8 +152,67 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
       progressRef.current = 0;
       setFormData({ location: 'Silk Board Junction, Bangalore', condition: 'critical', contact: '', patientName: '', hospital: '', customHospital: '' });
       setShowCustomHospital(false);
+      setGeoError('');
+      geoAutoAttemptedRef.current = false;
     }
   }, [isOpen, pendingRequest, phase]);
+
+  useEffect(() => {
+    if (isOpen && phase === PHASE.FORM && !pendingRequest && !geoAutoAttemptedRef.current) {
+      geoAutoAttemptedRef.current = true;
+      handleUseCurrentLocation();
+    }
+  }, [isOpen, phase, pendingRequest]);
+
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setGeoError('Geolocation is not supported in this browser.');
+      return;
+    }
+
+    setGeoError('');
+    setGeoLoading(true);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        const coords = [lat, lng];
+
+        const nearest = getNearestHospitals(coords);
+        setNearestHospitals(nearest);
+
+        setFormData((prev) => {
+          const nearestName = nearest[0]?.name || prev.hospital;
+          const shouldReplaceHospital = !prev.hospital || prev.hospital === 'Other (type below)' || !nearest.some(h => h.name === prev.hospital);
+          return {
+            ...prev,
+            location: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+            hospital: shouldReplaceHospital ? nearestName : prev.hospital,
+            customHospital: shouldReplaceHospital ? '' : prev.customHospital,
+          };
+        });
+        setShowCustomHospital(false);
+
+        try {
+          const reverseRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
+          const reverseData = await reverseRes.json();
+          if (reverseData?.display_name) {
+            setFormData((prev) => ({ ...prev, location: reverseData.display_name }));
+          }
+        } catch {
+          // Fall back to lat/lng text if reverse geocoding fails.
+        }
+
+        setGeoLoading(false);
+      },
+      (error) => {
+        setGeoLoading(false);
+        setGeoError(error?.message || 'Unable to fetch current location.');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  };
 
   // Clean up animation on unmount
   useEffect(() => {
@@ -156,10 +233,17 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
       setTimeout(() => {
         setPhase(PHASE.TRACKING);
         setCorridorActive(true);
+        onTrackingStarted && onTrackingStarted();
         startAmbulanceMovement();
       }, 2500);
     }
-  }, [policeApproved, phase]);
+  }, [policeApproved, phase, onTrackingStarted]);
+
+  useEffect(() => {
+    if (phase === PHASE.ARRIVED) {
+      onArrived && onArrived();
+    }
+  }, [phase, onArrived]);
 
   const resolvedHospital = formData.hospital === 'Other (type below)'
     ? formData.customHospital || 'Custom Hospital'
@@ -294,9 +378,27 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
               <label style={labelStyle}>
                 <MapPin style={{ width: 14, height: 14, color: '#10b981' }} /> Emergency Location
               </label>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                <button
+                  type="button"
+                  onClick={handleUseCurrentLocation}
+                  disabled={geoLoading}
+                  style={{
+                    padding: '8px 12px', borderRadius: '8px', cursor: geoLoading ? 'not-allowed' : 'pointer',
+                    border: '1px solid rgba(6,182,212,0.25)', background: 'rgba(6,182,212,0.08)',
+                    color: '#67e8f9', fontSize: '0.78rem', fontWeight: 600,
+                    opacity: geoLoading ? 0.7 : 1,
+                  }}
+                >
+                  {geoLoading ? 'Fetching location...' : 'Use Current Location'}
+                </button>
+              </div>
               <input type="text" value={formData.location} required
                 onChange={(e) => setFormData({ ...formData, location: e.target.value })}
                 placeholder="Enter your current location..." style={inputStyle} />
+              {geoError && (
+                <div style={{ marginTop: '6px', fontSize: '0.75rem', color: '#fca5a5' }}>{geoError}</div>
+              )}
             </div>
 
             {/* Patient Name */}
@@ -330,14 +432,18 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
                   }}
                 >
                   <option value="" disabled>Choose a hospital...</option>
-                  {HOSPITAL_OPTIONS.map(h => (
-                    <option key={h} value={h} style={{ background: '#0f141e', color: '#e2e8f0' }}>{h}</option>
+                  {nearestHospitals.map(h => (
+                    <option key={h.name} value={h.name} style={{ background: '#0f141e', color: '#e2e8f0' }}>{h.name}</option>
                   ))}
+                  <option value="Other (type below)" style={{ background: '#0f141e', color: '#e2e8f0' }}>Other (type below)</option>
                 </select>
                 <ChevronDown style={{
                   position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)',
                   width: 16, height: 16, color: '#64748b', pointerEvents: 'none',
                 }} />
+              </div>
+              <div style={{ marginTop: '6px', fontSize: '0.72rem', color: 'rgba(148,163,184,0.75)' }}>
+                Suggestions are based on your current/pickup location.
               </div>
               {showCustomHospital && (
                 <input type="text" value={formData.customHospital}
