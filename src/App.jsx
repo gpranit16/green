@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Ambulance, BrainCircuit, TrafficCone, Building2 as Hospital, Map as MapIcon, Database, Server, Smartphone, Zap, Activity } from 'lucide-react';
+import AmbulanceSimulation from './AmbulanceSimulation';
 
 const TOTAL_FRAMES = 80;
 const FRAME_PATH = '/frames/Flow_delpmaspu__';
@@ -137,7 +138,7 @@ function Navbar({ scrollPercent }) {
 // ═══════════════════════════════
 // HERO SECTION
 // ═══════════════════════════════
-function HeroSection({ scrollY }) {
+function HeroSection({ scrollY, onRequestAmbulance }) {
   const parallaxY = scrollY * 0.3;
   const scale = 1 + scrollY * 0.0002;
   const opacity = Math.max(0, 1 - scrollY / 700);
@@ -186,7 +187,7 @@ function HeroSection({ scrollY }) {
 
         {/* Buttons */}
         <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button className="btn-primary">
+          <button className="btn-primary" onClick={onRequestAmbulance}>
             <Ambulance style={{ width: 20, height: 20 }} />
             Request Ambulance
           </button>
@@ -783,6 +784,7 @@ function Footer() {
 export default function App() {
   const { images, loaded, progress } = useFrameLoader();
   const { scrollY, scrollPercent } = useScrollProgress();
+  const [showSimulation, setShowSimulation] = useState(false);
 
   return (
     <>
@@ -794,7 +796,7 @@ export default function App() {
       <Navbar scrollPercent={scrollPercent} />
 
       <main>
-        <HeroSection scrollY={scrollY} />
+        <HeroSection scrollY={scrollY} onRequestAmbulance={() => setShowSimulation(true)} />
         <FrameAnimationSection images={images} loaded={loaded} />
         <ChallengeSection />
         <CorridorSection />
@@ -804,6 +806,7 @@ export default function App() {
       </main>
 
       <Footer />
+      <AmbulanceSimulation isOpen={showSimulation} onClose={() => setShowSimulation(false)} />
     </>
   );
 }
