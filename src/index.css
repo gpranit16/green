@@ -1,0 +1,660 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==============================
+   DESIGN SYSTEM - CINEMATIC 3D
+   ============================== */
+
+:root {
+  --color-bg-dark: #0a0e17;
+  --color-bg-space: #060b14;
+  --color-emerald: #10b981;
+  --color-emerald-glow: rgba(16, 185, 129, 0.4);
+  --color-cyan: #06b6d4;
+  --color-cyan-glow: rgba(6, 182, 212, 0.3);
+  --color-red-glow: rgba(239, 68, 68, 0.5);
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-bg-light: rgba(255, 255, 255, 0.08);
+  --shadow-glow-emerald: 0 0 40px rgba(16, 185, 129, 0.15), 0 0 80px rgba(16, 185, 129, 0.05);
+  --shadow-glow-cyan: 0 0 40px rgba(6, 182, 212, 0.15), 0 0 80px rgba(6, 182, 212, 0.05);
+  --font-display: 'Outfit', sans-serif;
+  --font-body: 'Inter', sans-serif;
+}
+
+/* ==============================
+   BASE RESET & GLOBALS
+   ============================== */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: auto; /* We handle smooth scroll manually */
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--color-bg-dark);
+  color: #e2e8f0;
+  overflow-x: hidden;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg-dark);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(16, 185, 129, 0.5);
+}
+
+/* ==============================
+   3D SCENE CONTAINER
+   ============================== */
+
+.scene-container {
+  position: relative;
+  width: 100%;
+  perspective: 1200px;
+  perspective-origin: 50% 50%;
+}
+
+/* ==============================
+   GLASSMORPHISM PANELS
+   ============================== */
+
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 24px;
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  transition: transform 0.5s cubic-bezier(0.23, 1, 0.32, 1), 
+              box-shadow 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.glass-card:hover {
+  transform: translateY(-8px) scale(1.02);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3), var(--shadow-glow-emerald);
+}
+
+/* ==============================
+   3D FLOATING PANELS
+   ============================== */
+
+.panel-3d {
+  transform-style: preserve-3d;
+  transition: transform 0.8s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.float-layer-1 {
+  transform: translateZ(30px);
+}
+
+.float-layer-2 {
+  transform: translateZ(60px);
+}
+
+.float-layer-3 {
+  transform: translateZ(90px);
+}
+
+/* ==============================
+   GLOW EFFECTS
+   ============================== */
+
+.glow-emerald {
+  box-shadow: var(--shadow-glow-emerald);
+}
+
+.glow-cyan {
+  box-shadow: var(--shadow-glow-cyan);
+}
+
+.text-glow {
+  text-shadow: 0 0 40px rgba(16, 185, 129, 0.3), 0 0 80px rgba(6, 182, 212, 0.15);
+}
+
+.text-glow-strong {
+  text-shadow: 0 0 20px rgba(16, 185, 129, 0.5), 0 0 60px rgba(6, 182, 212, 0.3), 0 0 100px rgba(16, 185, 129, 0.1);
+}
+
+/* ==============================
+   HERO TITLE STYLES
+   ============================== */
+
+.hero-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  background: linear-gradient(135deg, #ffffff 0%, #10b981 50%, #06b6d4 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero-subtitle {
+  font-family: var(--font-body);
+  color: rgba(226, 232, 240, 0.7);
+  font-weight: 300;
+  letter-spacing: 0.01em;
+}
+
+/* ==============================
+   SECTION TRANSITIONS
+   ============================== */
+
+.section-reveal {
+  opacity: 0;
+  transform: translateY(60px);
+  transition: opacity 0.8s cubic-bezier(0.23, 1, 0.32, 1), 
+              transform 0.8s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.section-reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.stagger-1 { transition-delay: 0.1s; }
+.stagger-2 { transition-delay: 0.2s; }
+.stagger-3 { transition-delay: 0.3s; }
+.stagger-4 { transition-delay: 0.4s; }
+.stagger-5 { transition-delay: 0.5s; }
+
+/* ==============================
+   FRAME VIEWER (Canvas Container)
+   ============================== */
+
+.frame-viewer {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.frame-viewer canvas {
+  max-width: 90%;
+  max-height: 80vh;
+  border-radius: 16px;
+  box-shadow: 
+    0 0 60px rgba(16, 185, 129, 0.1),
+    0 0 120px rgba(6, 182, 212, 0.05),
+    0 25px 50px rgba(0, 0, 0, 0.5);
+}
+
+/* Vignette overlay around the canvas */
+.frame-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 40%, var(--color-bg-dark) 100%);
+}
+
+/* ==============================
+   STICKY SCROLL SECTIONS
+   ============================== */
+
+.scroll-section {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.sticky-container {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* ==============================
+   TRAFFIC LIGHT ANIMATIONS
+   ============================== */
+
+.traffic-light {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 6px;
+  background: #1a1a2e;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  align-items: center;
+}
+
+.traffic-bulb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  transition: all 0.6s ease;
+}
+
+.traffic-bulb.red-active {
+  background: #ef4444;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.6), 0 0 24px rgba(239, 68, 68, 0.3);
+}
+
+.traffic-bulb.yellow-active {
+  background: #eab308;
+  box-shadow: 0 0 12px rgba(234, 179, 8, 0.6), 0 0 24px rgba(234, 179, 8, 0.3);
+}
+
+.traffic-bulb.green-active {
+  background: #10b981;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.6), 0 0 24px rgba(16, 185, 129, 0.3);
+}
+
+/* ==============================
+   CONGESTION LINES
+   ============================== */
+
+.congestion-line {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #ef4444, #f97316, #ef4444);
+  background-size: 200% 100%;
+  animation: congestionPulse 2s ease-in-out infinite;
+}
+
+@keyframes congestionPulse {
+  0%, 100% { background-position: 0% 50%; opacity: 0.6; }
+  50% { background-position: 100% 50%; opacity: 1; }
+}
+
+/* Green corridor line */
+.corridor-line {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #10b981, #06b6d4, #10b981);
+  background-size: 200% 100%;
+  animation: corridorFlow 1.5s ease-in-out infinite;
+  box-shadow: 0 0 10px var(--color-emerald-glow);
+}
+
+@keyframes corridorFlow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* ==============================
+   FLOATING ANIMATIONS
+   ============================== */
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+
+@keyframes floatSlow {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-8px) rotate(1deg); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+@keyframes drift {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(5px, -5px); }
+  50% { transform: translate(-3px, -10px); }
+  75% { transform: translate(-5px, -3px); }
+}
+
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+.animate-float-slow {
+  animation: floatSlow 6s ease-in-out infinite;
+}
+
+.animate-drift {
+  animation: drift 8s ease-in-out infinite;
+}
+
+/* ==============================
+   PROGRESS BAR
+   ============================== */
+
+.scroll-progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--color-emerald), var(--color-cyan));
+  z-index: 9999;
+  transition: width 0.1s linear;
+  box-shadow: 0 0 10px var(--color-emerald-glow);
+}
+
+/* ==============================
+   CTA BUTTONS
+   ============================== */
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 32px;
+  border-radius: 50px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 1rem;
+  border: none;
+  cursor: pointer;
+  background: linear-gradient(135deg, #10b981, #06b6d4);
+  color: white;
+  box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3), 0 0 40px rgba(16, 185, 129, 0.1);
+  transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-primary::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.2), transparent);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 8px 30px rgba(16, 185, 129, 0.4), 0 0 60px rgba(16, 185, 129, 0.15);
+}
+
+.btn-primary:hover::before {
+  opacity: 1;
+}
+
+.btn-primary:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 32px;
+  border-radius: 50px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(12px);
+  transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--color-emerald);
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
+  transform: translateY(-2px);
+}
+
+/* ==============================
+   STAT CARDS
+   ============================== */
+
+.stat-card {
+  text-align: center;
+  padding: 32px 24px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  transition: all 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.stat-card:hover {
+  border-color: var(--color-emerald);
+  box-shadow: var(--shadow-glow-emerald);
+  transform: translateY(-4px);
+}
+
+.stat-number {
+  font-family: var(--font-display);
+  font-size: 3.5rem;
+  font-weight: 800;
+  line-height: 1;
+  margin-bottom: 8px;
+}
+
+/* ==============================
+   GRADIENT TEXT UTILITIES
+   ============================== */
+
+.gradient-text-emerald {
+  background: linear-gradient(135deg, #10b981, #06b6d4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-text-red {
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ==============================
+   BACKGROUND GRID / STARS
+   ============================== */
+
+.bg-grid {
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+.bg-stars {
+  background-image: 
+    radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.3) 1px, transparent 0),
+    radial-gradient(1px 1px at 40% 70%, rgba(255,255,255,0.2) 1px, transparent 0),
+    radial-gradient(1px 1px at 60% 20%, rgba(255,255,255,0.15) 1px, transparent 0),
+    radial-gradient(1px 1px at 80% 50%, rgba(255,255,255,0.2) 1px, transparent 0),
+    radial-gradient(1px 1px at 10% 80%, rgba(255,255,255,0.1) 1px, transparent 0),
+    radial-gradient(1px 1px at 70% 90%, rgba(255,255,255,0.15) 1px, transparent 0),
+    radial-gradient(1.5px 1.5px at 50% 50%, rgba(16,185,129,0.3) 1px, transparent 0);
+}
+
+/* ==============================
+   NAVBAR
+   ============================== */
+
+.navbar {
+  position: fixed;
+  top: 0;
+  width: 100%;
+  z-index: 100;
+  padding: 0 24px;
+  transition: all 0.4s ease;
+}
+
+.navbar-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 64px;
+  padding: 0 16px;
+  border-radius: 0 0 16px 16px;
+  background: rgba(10, 14, 23, 0.6);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: none;
+}
+
+.nav-links {
+  display: flex;
+  gap: 32px;
+  list-style: none;
+}
+
+.nav-links a {
+  color: rgba(226, 232, 240, 0.6);
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: color 0.3s;
+  letter-spacing: 0.02em;
+}
+
+.nav-links a:hover {
+  color: var(--color-emerald);
+}
+
+/* ==============================
+   PORTAL CARDS
+   ============================== */
+
+.portal-card {
+  padding: 32px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px);
+  transition: all 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.portal-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--card-accent, #10b981), transparent);
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+
+.portal-card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  transform: translateY(-6px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+}
+
+.portal-card:hover::before {
+  opacity: 1;
+}
+
+.portal-icon-box {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  color: white;
+}
+
+/* ==============================
+   FLOW STEPS
+   ============================== */
+
+.flow-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  transition: transform 0.4s ease;
+}
+
+.flow-step:hover {
+  transform: translateY(-8px);
+}
+
+.flow-icon-box {
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-emerald);
+  transition: all 0.3s;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.flow-step:hover .flow-icon-box {
+  border-color: var(--color-emerald);
+  box-shadow: var(--shadow-glow-emerald);
+}
+
+/* ==============================
+   RESPONSIVE
+   ============================== */
+
+@media (max-width: 768px) {
+  .hero-title {
+    font-size: 2.5rem !important;
+  }
+  
+  .nav-links {
+    display: none;
+  }
+  
+  .stat-number {
+    font-size: 2.5rem;
+  }
+  
+  .frame-viewer canvas {
+    max-width: 95%;
+    max-height: 60vh;
+  }
+}
