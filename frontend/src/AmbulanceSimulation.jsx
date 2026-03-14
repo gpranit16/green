@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, useMap 
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.heat';
-import { X, Ambulance, Phone, MapPin, Activity, Clock, Navigation, Shield, Radio, AlertTriangle, Heart, Zap, Building2, ChevronDown, CheckCircle, RotateCcw, GitBranch, Flame, RefreshCw } from 'lucide-react';
+import { X, Ambulance, Phone, MapPin, Activity, Clock, Navigation, Shield, Radio, AlertTriangle, Heart, Zap, Building2, ChevronDown, CheckCircle, RotateCcw, GitBranch, Flame, RefreshCw, Mail } from 'lucide-react';
 import { computeSignalPreemption, computeETA, haversineDistance, generateRouteCandidates, generateCongestionZones, checkReroute } from './trafficAlgorithm';
 import JourneyReport from './JourneyReport';
 
@@ -21,6 +21,15 @@ const ROUTE_COORDS = [
 
 const USER_LOCATION     = [12.9170, 77.6230];
 const HOSPITAL_LOCATION = [12.9700, 77.5890];
+
+const MILD_ROUTE_COORDS = [
+  [12.9305, 77.6175], [12.9320, 77.6148], [12.9340, 77.6122],
+  [12.9365, 77.6094], [12.9390, 77.6068], [12.9416, 77.6042],
+  [12.9440, 77.6018], [12.9468, 77.5998], [12.9492, 77.5981],
+  [12.9515, 77.5963], [12.9539, 77.5949], [12.9565, 77.5936],
+  [12.9588, 77.5924], [12.9612, 77.5915], [12.9635, 77.5908],
+  [12.9658, 77.5902], [12.9680, 77.5896], [12.9700, 77.5890],
+];
 
 const TRAFFIC_SIGNALS = [
   { pos: [12.9240, 77.6160], name: 'BTM Layout Signal' },
@@ -48,6 +57,12 @@ const createAmbulanceIcon = () => L.divIcon({
   iconSize: [40, 40], iconAnchor: [20, 20],
 });
 
+const createMildAmbulanceIcon = () => L.divIcon({
+  className: '',
+  html: `<div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#ea580c);display:flex;align-items:center;justify-content:center;box-shadow:0 0 14px rgba(245,158,11,0.45),0 0 28px rgba(245,158,11,0.2);border:2px solid rgba(255,255,255,0.28);"><span style="font-size:16px">🚑</span></div>`,
+  iconSize: [34, 34], iconAnchor: [17, 17],
+});
+
 const createUserIcon = () => L.divIcon({
   className: '',
   html: `<div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#f97316,#ea580c);display:flex;align-items:center;justify-content:center;box-shadow:0 0 15px rgba(249,115,22,0.5);border:2px solid rgba(255,255,255,0.3);"><span style="font-size:16px">📍</span></div>`,
@@ -59,6 +74,20 @@ const createHospitalIcon = () => L.divIcon({
   html: `<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#06b6d4,#0891b2);display:flex;align-items:center;justify-content:center;box-shadow:0 0 15px rgba(6,182,212,0.5);border:2px solid rgba(255,255,255,0.3);"><span style="font-size:18px">🏥</span></div>`,
   iconSize: [36, 36], iconAnchor: [18, 18],
 });
+
+function interpolateRoutePosition(routeCoords, progress01) {
+  const totalSteps = routeCoords.length - 1;
+  if (totalSteps <= 0) return routeCoords[0];
+
+  const clamped = Math.max(0, Math.min(1, progress01));
+  const exactIndex = clamped * totalSteps;
+  const idx = Math.min(Math.floor(exactIndex), totalSteps - 1);
+  const frac = exactIndex - idx;
+
+  const lat = routeCoords[idx][0] + (routeCoords[idx + 1][0] - routeCoords[idx][0]) * frac;
+  const lng = routeCoords[idx][1] + (routeCoords[idx + 1][1] - routeCoords[idx][1]) * frac;
+  return [lat, lng];
+}
 
 function MapFollower({ position, isTracking }) {
   const map = useMap();
@@ -200,6 +229,7 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
     location: 'Silk Board Junction, Bangalore',
     condition: 'critical',
     contact: '',
+    email: '',
     patientName: '',
     hospital: '',
     customHospital: '',
@@ -209,12 +239,15 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError] = useState('');
   const [ambulancePos, setAmbulancePos]   = useState(ROUTE_COORDS[0]);
+  const [mildAmbulancePos, setMildAmbulancePos] = useState(MILD_ROUTE_COORDS[0]);
   const [routeProgress, setRouteProgress] = useState(0);
+  const [mildRouteProgress, setMildRouteProgress] = useState(0);
   const [eta, setEta]                     = useState(6);
   const [distance, setDistance]           = useState(4.2);
   const [greenSignals, setGreenSignals]   = useState([]);
   const [greenSet, setGreenSet]           = useState(new Set());
   const [corridorActive, setCorridorActive] = useState(false);
+  const [priorityConflict, setPriorityConflict] = useState(null);
   const [showTrafficHeat, setShowTrafficHeat] = useState(true);
   // AI Route Intelligence state
   const [routeCandidates, setRouteCandidates] = useState([]);
@@ -229,6 +262,7 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
   const journeyStartTimeRef = useRef(null);
   const animRef   = useRef(null);
   const progressRef = useRef(0);
+  const mildProgressRef = useRef(0);
   const geoAutoAttemptedRef = useRef(false);
 
   const getNearestHospitals = (coords) => {
@@ -268,11 +302,15 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
       setGreenSet(new Set());
       setCorridorActive(false);
       setAmbulancePos(ROUTE_COORDS[0]);
+      setMildAmbulancePos(MILD_ROUTE_COORDS[0]);
+      setMildRouteProgress(0);
+      setPriorityConflict(null);
       setRouteCandidates([]);
       setCongestionZones([]);
       setSirenDetections({});
       progressRef.current = 0;
-      setFormData({ location: 'Silk Board Junction, Bangalore', condition: 'critical', contact: '', patientName: '', hospital: '', customHospital: '' });
+      mildProgressRef.current = 0;
+      setFormData({ location: 'Silk Board Junction, Bangalore', condition: 'critical', contact: '', email: '', patientName: '', hospital: '', customHospital: '' });
       setShowCustomHospital(false);
       setGeoError('');
       geoAutoAttemptedRef.current = false;
@@ -386,6 +424,7 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
       location: formData.location,
       condition: formData.condition,
       contact: formData.contact,
+      email: formData.email,
       patientName: formData.patientName,
       hospital,
     });
@@ -397,6 +436,16 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
     const animDuration = 25000;
     const startTime = performance.now();
     let currentGreenSet = new Set();
+    let lastFrameTime = startTime;
+    mildProgressRef.current = 0;
+    setMildRouteProgress(0);
+    setMildAmbulancePos(MILD_ROUTE_COORDS[0]);
+    setPriorityConflict(null);
+
+    const PRIORITY_SCORE = { critical: 3, moderate: 2, mild: 1 };
+    const primaryPriority = PRIORITY_SCORE[(formData.condition || 'critical').toLowerCase()] || 3;
+    const mildPriority = PRIORITY_SCORE.mild;
+    const MILD_SPEED_PER_MS = 1 / (animDuration * 1.32);
     
     // Clear any existing animation before starting a new one
     if (animRef.current) {
@@ -405,19 +454,59 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
 
     const animate = (now) => {
       const elapsed = now - startTime;
+      const deltaMs = Math.max(0, now - lastFrameTime);
+      lastFrameTime = now;
       const t = Math.min(1, elapsed / animDuration);
       const easedT = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 
+      const pos = interpolateRoutePosition(ROUTE_COORDS, easedT);
       const exactIndex = easedT * totalSteps;
       const idx = Math.min(Math.floor(exactIndex), totalSteps - 1);
-      const frac = exactIndex - idx;
-
-      const lat = ROUTE_COORDS[idx][0] + (ROUTE_COORDS[idx + 1][0] - ROUTE_COORDS[idx][0]) * frac;
-      const lng = ROUTE_COORDS[idx][1] + (ROUTE_COORDS[idx + 1][1] - ROUTE_COORDS[idx][1]) * frac;
-      const pos = [lat, lng];
 
       setAmbulancePos(pos);
       setRouteProgress(easedT);
+
+      const mildCandidateProgress = Math.min(1, mildProgressRef.current + (deltaMs * MILD_SPEED_PER_MS));
+      const mildCandidatePos = interpolateRoutePosition(MILD_ROUTE_COORDS, mildCandidateProgress);
+
+      let mildCommittedProgress = mildCandidateProgress;
+      let conflict = null;
+
+      for (const signal of TRAFFIC_SIGNALS) {
+        const highDist = haversineDistance(pos, signal.pos);
+        const mildDist = haversineDistance(mildCandidatePos, signal.pos);
+        const bothAtSignal = highDist <= 170 && mildDist <= 170;
+        if (!bothAtSignal) continue;
+
+        let winner = 'HIGH';
+        if (mildPriority > primaryPriority) {
+          winner = 'MILD';
+        } else if (mildPriority === primaryPriority) {
+          winner = highDist <= mildDist ? 'HIGH' : 'MILD';
+        }
+
+        const reason = winner === 'HIGH'
+          ? 'Higher medical urgency gets signal preemption'
+          : 'Comparable urgency; nearest ambulance gets temporary priority';
+
+        conflict = {
+          signal: signal.name,
+          winner,
+          highPriority: formData.condition?.toUpperCase() || 'CRITICAL',
+          mildPriority: 'MILD',
+          reason,
+        };
+
+        if (winner === 'HIGH') {
+          mildCommittedProgress = mildProgressRef.current;
+        }
+        break;
+      }
+
+      mildProgressRef.current = mildCommittedProgress;
+      setMildRouteProgress(mildCommittedProgress);
+      setMildAmbulancePos(interpolateRoutePosition(MILD_ROUTE_COORDS, mildCommittedProgress));
+      setPriorityConflict(conflict);
 
       // Use traffic algorithm to determine green signals
       const { greenSet: newGreenSet } = computeSignalPreemption(pos, TRAFFIC_SIGNALS, currentGreenSet);
@@ -668,6 +757,20 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
                 placeholder="+91 98765 43210" style={inputStyle} />
             </div>
 
+            <div>
+              <label style={labelStyle}>
+                <Mail style={{ width: 14, height: 14, color: '#10b981' }} /> Notification Email (Gmail)
+              </label>
+              <input
+                type="email"
+                required
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                placeholder="youremail@gmail.com"
+                style={inputStyle}
+              />
+            </div>
+
             {/* Info note */}
             <div style={{
               padding: '12px 14px', borderRadius: '10px',
@@ -834,6 +937,9 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
                 </>)}
                 <Polyline positions={ROUTE_COORDS} pathOptions={{ color: '#10b981', weight: 20, opacity: 0.05 }} />
 
+                {/* ── Secondary mild-priority demo route ── */}
+                <Polyline positions={MILD_ROUTE_COORDS} pathOptions={{ color: '#f59e0b', weight: 3, opacity: 0.45, dashArray: '7,8' }} />
+
                 {/* ── Siren Acoustic Detection Ripples ── */}
                 {Object.entries(sirenDetections).map(([sigIdxStr, ripples]) => {
                   const sigIdx = parseInt(sigIdxStr);
@@ -870,6 +976,9 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
                 </Marker>
                 <Marker position={ambulancePos} icon={createAmbulanceIcon()}>
                   <Popup>🚑 AMB-404<br />Driver: Rajesh Kumar</Popup>
+                </Marker>
+                <Marker position={mildAmbulancePos} icon={createMildAmbulanceIcon()}>
+                  <Popup>🚑 AMB-214 (Demo)<br />Priority: Mild</Popup>
                 </Marker>
               </MapContainer>
 
@@ -908,6 +1017,34 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
                       → {rerouteAlert.alternate.label}
                     </span>
                   )}
+                </div>
+              )}
+
+              {priorityConflict && (
+                <div style={{
+                  position: 'absolute', top: rerouteAlert ? '128px' : '60px', left: '12px', right: '12px', zIndex: 1099,
+                  padding: '10px 16px', borderRadius: '12px',
+                  background: 'rgba(99,102,241,0.18)', backdropFilter: 'blur(12px)',
+                  border: '1px solid rgba(129,140,248,0.35)',
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                }}>
+                  <Shield style={{ width: 16, height: 16, color: '#c7d2fe', flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#c7d2fe' }}>
+                      Priority arbitration at {priorityConflict.signal}
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'rgba(199,210,254,0.82)', marginTop: 2 }}>
+                      Winner: {priorityConflict.winner} · {priorityConflict.reason}
+                    </div>
+                  </div>
+                  <span style={{
+                    fontSize: '0.63rem',
+                    color: priorityConflict.winner === 'HIGH' ? '#6ee7b7' : '#fdba74',
+                    fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {priorityConflict.highPriority} vs {priorityConflict.mildPriority}
+                  </span>
                 </div>
               )}
 
@@ -1042,6 +1179,24 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
                   {eta} <span style={{ fontSize: '1rem', color: '#64748b' }}>min</span>
                 </div>
                 <span style={{ fontSize: '0.75rem', color: '#64748b' }}>ESTIMATED ARRIVAL</span>
+              </div>
+
+              <div style={{
+                padding: '14px', borderRadius: '14px',
+                background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(129,140,248,0.18)',
+              }}>
+                <h4 style={{ fontSize: '0.7rem', color: '#a5b4fc', margin: '0 0 10px', letterSpacing: '0.1em' }}>PRIORITY CONFLICT ENGINE</h4>
+                <div style={{ fontSize: '0.78rem', color: '#cbd5e1', lineHeight: 1.6 }}>
+                  High-priority AMB-404 and mild-priority AMB-214 share signal network.
+                </div>
+                <div style={{ marginTop: '8px', fontSize: '0.72rem', color: priorityConflict ? '#6ee7b7' : '#94a3b8' }}>
+                  {priorityConflict
+                    ? `At ${priorityConflict.signal}: ${priorityConflict.winner} gets signal first`
+                    : 'No active conflict right now — both routes progressing'}
+                </div>
+                <div style={{ marginTop: '8px', fontSize: '0.65rem', color: '#64748b' }}>
+                  Mild route progress: {Math.round(mildRouteProgress * 100)}%
+                </div>
               </div>
 
               {/* Details */}

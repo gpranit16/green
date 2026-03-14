@@ -53,8 +53,13 @@ const emergencyRequestSchema = new mongoose.Schema({
   location: String,
   condition: String,
   contact: String,
+  email: String,
   patientName: String,
   hospital: String,
+  notificationsSent: {
+    hospitalApprovedAt: Date,
+    trackingStartedAt: Date,
+  },
   status: {
     type: String,
     enum: ['WAITING_HOSPITAL', 'WAITING_POLICE', 'ASSIGNED', 'TRACKING', 'ARRIVED', 'REJECTED', 'CANCELLED'],
@@ -69,6 +74,11 @@ const TERMINAL_STATUSES = ['ARRIVED', 'REJECTED', 'CANCELLED'];
 app.get('/api/health', (_req, res) => {
   res.json({ success: true, service: 'green-corridor-api', uptime: process.uptime() });
 });
+
+function normalizeEmail(email) {
+  if (!email) return '';
+  return String(email).trim().toLowerCase();
+}
 
 async function sendSmsIfConfigured(to, message) {
   const provider = (process.env.SMS_PROVIDER || '').toLowerCase();
@@ -110,6 +120,61 @@ async function sendSmsIfConfigured(to, message) {
   return { success: true, sid: data.sid };
 }
 
+async function sendResendEmailIfConfigured(to, subject, html, text) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM_EMAIL || 'Green Corridor <onboarding@resend.dev>';
+  const recipient = normalizeEmail(to);
+
+  if (!apiKey || !recipient) {
+    return { skipped: true, reason: 'Missing RESEND_API_KEY or recipient email' };
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from,
+      to: [recipient],
+      subject,
+      html,
+      text
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Resend email failed (${response.status}): ${errText}`);
+  }
+
+  const data = await response.json();
+  console.log(`✅ Resend email accepted: ${data.id}`);
+  return { success: true, id: data.id };
+}
+
+app.post('/api/email/test', async (req, res) => {
+  try {
+    const to = normalizeEmail(req.body?.to || req.query?.to);
+    if (!to) {
+      return res.status(400).json({ success: false, message: 'Missing `to` email.' });
+    }
+
+    const link = 'https://green-frontend-weld.vercel.app/#simulation';
+    const result = await sendResendEmailIfConfigured(
+      to,
+      'Green Corridor Email Delivery Test',
+      `<p>This is a test email from <strong>Green Corridor</strong>.</p><p>Track link: <a href="${link}">${link}</a></p>`,
+      `This is a test email from Green Corridor.\nTrack link: ${link}`
+    );
+
+    return res.json({ success: true, result });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // API Endpoints
 
 // 1. Create a new emergency request
@@ -123,6 +188,7 @@ app.post('/api/request', async (req, res) => {
 
     const newRequest = new EmergencyRequest({
       ...req.body,
+      email: normalizeEmail(req.body.email),
       status: 'WAITING_HOSPITAL'
     });
     await newRequest.save();
@@ -222,6 +288,11 @@ app.post('/api/request/clear-history', async (req, res) => {
 app.put('/api/request/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
+    const previousRequest = await EmergencyRequest.findById(req.params.id);
+    if (!previousRequest) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
     const updatedRequest = await EmergencyRequest.findByIdAndUpdate(
       req.params.id,
       { status, updatedAt: Date.now() },
@@ -231,20 +302,65 @@ app.put('/api/request/:id/status', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Request not found' });
     }
 
-    if (updatedRequest.contact && ['WAITING_POLICE', 'ASSIGNED', 'TRACKING', 'ARRIVED', 'REJECTED', 'CANCELLED'].includes(status)) {
-      const statusText = {
-        WAITING_POLICE: 'Hospital approved. Waiting for police escort confirmation.',
-        ASSIGNED: 'Police confirmed. Ambulance assigned and preparing dispatch.',
-        TRACKING: 'Ambulance is on the way. Green corridor is active.',
-        ARRIVED: 'Ambulance has arrived at destination.',
-        REJECTED: 'Request was rejected by hospital and closed.',
-        CANCELLED: 'Request has been cancelled.',
-      };
-      try {
-        await sendSmsIfConfigured(updatedRequest.contact, `GreenCorridor update: ${statusText[status] || status}`);
-      } catch (smsError) {
-        console.warn('⚠️ SMS status update failed:', smsError.message);
+    const hasStatusTransition = previousRequest.status !== status;
+
+    const emailMap = {
+      WAITING_POLICE: {
+        subject: 'Green Corridor: Hospital Approved Your Request',
+        text: `Green Corridor System:\nYour emergency request has been approved by the hospital.\nHospital: ${updatedRequest.hospital || 'Selected hospital'}\nAmbulance: AMB-404\nDriver: Rajesh Kumar`,
+        html: `<p><strong>Green Corridor System</strong></p><p>Your emergency request has been approved by the hospital.</p><p><strong>Hospital:</strong> ${updatedRequest.hospital || 'Selected hospital'}<br/><strong>Ambulance:</strong> AMB-404<br/><strong>Driver:</strong> Rajesh Kumar</p>`,
+        flagPath: 'notificationsSent.hospitalApprovedAt',
+        alreadySent: Boolean(previousRequest.notificationsSent?.hospitalApprovedAt),
+        label: 'hospital-approved'
+      },
+      ASSIGNED: {
+        subject: 'Green Corridor: Hospital Approved Your Request',
+        text: `Green Corridor System:\nYour emergency request has been approved by the hospital.\nHospital: ${updatedRequest.hospital || 'Selected hospital'}\nAmbulance: AMB-404\nDriver: Rajesh Kumar`,
+        html: `<p><strong>Green Corridor System</strong></p><p>Your emergency request has been approved by the hospital.</p><p><strong>Hospital:</strong> ${updatedRequest.hospital || 'Selected hospital'}<br/><strong>Ambulance:</strong> AMB-404<br/><strong>Driver:</strong> Rajesh Kumar</p>`,
+        flagPath: 'notificationsSent.hospitalApprovedAt',
+        alreadySent: Boolean(previousRequest.notificationsSent?.hospitalApprovedAt),
+        label: 'hospital-approved-fallback'
+      },
+      TRACKING: {
+        subject: 'Green Corridor: Live Tracking Started',
+        text: 'Trip has started. Track your ambulance live:\nhttps://green-frontend-weld.vercel.app/#simulation',
+        html: '<p><strong>Green Corridor System</strong></p><p>Trip has started.</p><p>Track your ambulance live:<br/><a href="https://green-frontend-weld.vercel.app/#simulation">https://green-frontend-weld.vercel.app/#simulation</a></p>',
+        flagPath: 'notificationsSent.trackingStartedAt',
+        alreadySent: Boolean(previousRequest.notificationsSent?.trackingStartedAt),
+        label: 'tracking-started'
       }
+    };
+
+    const selected = emailMap[status];
+    const shouldAttemptEmail = Boolean(
+      selected &&
+      hasStatusTransition &&
+      updatedRequest.email &&
+      !selected.alreadySent
+    );
+
+    if (selected) {
+      console.log(
+        `📨 Notification check | request=${updatedRequest._id} | from=${previousRequest.status} -> to=${status} | hasTransition=${hasStatusTransition} | hasEmail=${Boolean(updatedRequest.email)} | alreadySent=${selected.alreadySent}`
+      );
+    }
+
+    if (shouldAttemptEmail) {
+      try {
+        await sendResendEmailIfConfigured(updatedRequest.email, selected.subject, selected.html, selected.text);
+        const sentAt = new Date();
+        await EmergencyRequest.findByIdAndUpdate(req.params.id, {
+          $set: {
+            [selected.flagPath]: sentAt,
+            updatedAt: Date.now(),
+          }
+        });
+        console.log(`✅ Notification sent (${selected.label}) for request=${updatedRequest._id}`);
+      } catch (emailError) {
+        console.warn(`⚠️ Email notification failed (${selected.label}) for request=${updatedRequest._id}:`, emailError.message);
+      }
+    } else if (selected) {
+      console.log(`ℹ️ Notification skipped (${selected.label}) for request=${updatedRequest._id}`);
     }
 
     res.json({ success: true, data: updatedRequest });

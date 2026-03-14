@@ -15,7 +15,12 @@ const API_FALLBACK_BASES = Array.from(
     'http://localhost:5052',
     'http://localhost:5053',
     'http://localhost:5054',
-    'http://localhost:5055'
+    'http://localhost:5055',
+    'http://localhost:5056',
+    'http://localhost:5057',
+    'http://localhost:5058',
+    'http://localhost:5059',
+    'http://localhost:5060'
   ].filter(Boolean))
 );
 
@@ -656,6 +661,10 @@ export default function App() {
   const [requestId, setRequestId] = useState(null);
   const [requestStatus, setRequestStatus] = useState(null);
   const [requestHistory, setRequestHistory] = useState([]);
+  const [notificationStatus, setNotificationStatus] = useState({
+    hospitalApprovedAt: null,
+    trackingStartedAt: null,
+  });
 
   const apiFetch = useCallback(async (path, options = {}) => {
     const candidates = [apiBaseUrl, ...API_FALLBACK_BASES.filter(base => base !== apiBaseUrl)];
@@ -717,15 +726,16 @@ export default function App() {
   }, []);
 
   const updateRequestStatus = useCallback(async (status, { clearLocal = false } = {}) => {
-    if (!requestId) return;
+    if (!requestId) return false;
     try {
-      await apiFetch(`/api/request/${requestId}/status`, {
+      const res = await apiFetch(`/api/request/${requestId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
       });
+      const data = await res.json();
 
-      setRequestStatus(status);
+      setRequestStatus(data?.data?.status || status);
 
       if (clearLocal) {
         setPendingRequest(null);
@@ -733,8 +743,10 @@ export default function App() {
         setPoliceApproved(false);
         setRequestId(null);
       }
+      return true;
     } catch (err) {
       console.error(`Failed to update request status to ${status}:`, err);
+      return false;
     }
   }, [apiFetch, requestId]);
 
@@ -748,10 +760,15 @@ export default function App() {
           const req = data.data;
           setRequestId(req._id);
           setRequestStatus(req.status);
+          setNotificationStatus({
+            hospitalApprovedAt: req.notificationsSent?.hospitalApprovedAt || null,
+            trackingStartedAt: req.notificationsSent?.trackingStartedAt || null,
+          });
           setPendingRequest({
             location: req.location,
             condition: req.condition,
             contact: req.contact,
+            email: req.email,
             patientName: req.patientName,
             hospital: req.hospital
           });
@@ -763,6 +780,7 @@ export default function App() {
           setPoliceApproved(false);
           setRequestId(null);
           setRequestStatus(null);
+          setNotificationStatus({ hospitalApprovedAt: null, trackingStartedAt: null });
         }
       } catch (err) {
         // Silent fail if backend isn't up
@@ -805,13 +823,16 @@ export default function App() {
         setHospitalApproved(false);
         setPoliceApproved(false);
         setRequestStatus('WAITING_HOSPITAL');
+        setNotificationStatus({ hospitalApprovedAt: null, trackingStartedAt: null });
       }
     } catch (err) { console.error('Failed to submit request to database:', err); }
   };
 
   const handleHospitalAccept = async () => {
-    await updateRequestStatus('WAITING_POLICE');
-    setHospitalApproved(true);
+    const ok = await updateRequestStatus('WAITING_POLICE');
+    if (ok) {
+      setHospitalApproved(true);
+    }
   };
 
   const handleHospitalReject = async () => {
@@ -819,8 +840,10 @@ export default function App() {
   };
 
   const handlePoliceConfirm = async () => {
-    await updateRequestStatus('ASSIGNED');
-    setPoliceApproved(true);
+    const ok = await updateRequestStatus('ASSIGNED');
+    if (ok) {
+      setPoliceApproved(true);
+    }
   };
 
   const handlePoliceCancel = async () => {
@@ -844,6 +867,7 @@ export default function App() {
       setPoliceApproved(false);
       setRequestId(null);
       setRequestStatus(null);
+      setNotificationStatus({ hospitalApprovedAt: null, trackingStartedAt: null });
     } catch (err) {
       console.error('Failed to clear active requests:', err);
     }
@@ -913,6 +937,7 @@ export default function App() {
         pendingRequest={pendingRequest}
         requestStatus={requestStatus}
         requestHistory={requestHistory}
+        notificationStatus={notificationStatus}
         onAccept={handleHospitalAccept}
         onReject={handleHospitalReject}
         onClearActive={handleClearActiveRequests}
@@ -926,6 +951,7 @@ export default function App() {
         hospitalApproved={hospitalApproved}
         requestStatus={requestStatus}
         requestHistory={requestHistory}
+        notificationStatus={notificationStatus}
         onConfirm={handlePoliceConfirm}
         onCancel={handlePoliceCancel}
         onClearActive={handleClearActiveRequests}

@@ -11,12 +11,13 @@ import {
 // Design: dark cinematic, indigo-blue accent
 // ═══════════════════════════════════════════════
 
-export default function PolicePortal({ isOpen, onClose, pendingRequest, hospitalApproved, requestStatus, requestHistory = [], onConfirm, onCancel, onClearActive, onClearHistory }) {
+export default function PolicePortal({ isOpen, onClose, pendingRequest, hospitalApproved, requestStatus, requestHistory = [], notificationStatus, onConfirm, onCancel, onClearActive, onClearHistory }) {
   const [confirmed, setConfirmed]   = useState(false);
   const [activeTab, setActiveTab]   = useState('alerts');
   const [notification, setNotif]    = useState(null);
   const isEscortPending = Boolean(pendingRequest && requestStatus === 'WAITING_POLICE' && hospitalApproved);
   const isEscortConfirmed = Boolean(['ASSIGNED', 'TRACKING', 'ARRIVED'].includes(requestStatus) || confirmed);
+  const trackingEmailSent = Boolean(notificationStatus?.trackingStartedAt);
 
   useEffect(() => {
     if (isOpen) {
@@ -159,6 +160,19 @@ export default function PolicePortal({ isOpen, onClose, pendingRequest, hospital
             {tabs.find(t => t.id === activeTab)?.label}
           </h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {pendingRequest && ['ASSIGNED', 'TRACKING', 'ARRIVED'].includes(requestStatus) && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '6px 12px', borderRadius: '50px',
+                background: trackingEmailSent ? 'rgba(16,185,129,0.1)' : 'rgba(234,179,8,0.12)',
+                border: `1px solid ${trackingEmailSent ? 'rgba(16,185,129,0.25)' : 'rgba(234,179,8,0.25)'}`,
+                color: trackingEmailSent ? '#6ee7b7' : '#fcd34d',
+                fontSize: '0.72rem', fontWeight: 700,
+              }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: trackingEmailSent ? '#10b981' : '#eab308', animation: 'pulse-glow 1s ease-in-out infinite' }} />
+                Tracking Email: {trackingEmailSent ? 'SENT' : 'PENDING'}
+              </div>
+            )}
             <button
               onClick={() => onClearActive && onClearActive()}
               style={{
@@ -339,6 +353,16 @@ export default function PolicePortal({ isOpen, onClose, pendingRequest, hospital
                   <p style={{ color: 'rgba(148,163,184,0.7)', fontSize: '0.9rem', marginBottom: '24px' }}>
                     Ambulance dispatch initiated. Green corridor activation in progress across all 4 intersections.
                   </p>
+                  <div style={{
+                    marginBottom: '16px',
+                    padding: '8px 14px', borderRadius: '10px',
+                    background: trackingEmailSent ? 'rgba(16,185,129,0.08)' : 'rgba(234,179,8,0.12)',
+                    border: `1px solid ${trackingEmailSent ? 'rgba(16,185,129,0.2)' : 'rgba(234,179,8,0.22)'}`,
+                    color: trackingEmailSent ? '#6ee7b7' : '#fcd34d',
+                    fontSize: '0.78rem', fontWeight: 600,
+                  }}>
+                    ✉️ Tracking notification email: {trackingEmailSent ? 'Sent to user' : 'Pending backend trigger'}
+                  </div>
                   <div style={{ display: 'flex', gap: '12px' }}>
                     <div style={{
                       padding: '14px 20px', borderRadius: '12px',

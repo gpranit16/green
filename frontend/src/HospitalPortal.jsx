@@ -182,7 +182,7 @@ function PreArrivalChecklist({ condition, assignedRoom, assignedDoctor }) {
 
 export default function HospitalPortal({
   isOpen, onClose, pendingRequest, requestStatus,
-  requestHistory = [], onAccept, onReject, onClearActive, onClearHistory
+  requestHistory = [], notificationStatus, onAccept, onReject, onClearActive, onClearHistory
 }) {
   const [activeTab, setActiveTab]         = useState('requests');
   const [notification, setNotif]          = useState(null);
@@ -203,6 +203,7 @@ export default function HospitalPortal({
   );
   const isTracking = Boolean(pendingRequest && ['TRACKING', 'ARRIVED'].includes(requestStatus));
   const isArrived  = requestStatus === 'ARRIVED';
+  const hospitalEmailSent = Boolean(notificationStatus?.hospitalApprovedAt);
 
   // Live vitals — only stream when ambulance is en route
   const { vitals, trend } = useVitals(isTracking);
@@ -380,6 +381,19 @@ export default function HospitalPortal({
             {tabs.find(t => t.id === activeTab)?.label?.replace('🔴 ', '')}
           </h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {(isAccepted || isPendingForHospital) && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '6px 12px', borderRadius: '50px',
+                background: hospitalEmailSent ? 'rgba(16,185,129,0.1)' : 'rgba(234,179,8,0.12)',
+                border: `1px solid ${hospitalEmailSent ? 'rgba(16,185,129,0.25)' : 'rgba(234,179,8,0.25)'}`,
+                color: hospitalEmailSent ? '#6ee7b7' : '#fcd34d',
+                fontSize: '0.72rem', fontWeight: 700,
+              }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: hospitalEmailSent ? '#10b981' : '#eab308', animation: 'pulse-glow 1s ease-in-out infinite' }} />
+                Hospital Email: {hospitalEmailSent ? 'SENT' : 'PENDING'}
+              </div>
+            )}
             {isPendingForHospital && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
@@ -560,6 +574,9 @@ export default function HospitalPortal({
                     <div style={{ marginLeft: 'auto' }}>
                       <div style={{ fontSize: '0.62rem', color: '#64748b', textAlign: 'right' }}>STATUS</div>
                       <div style={{ fontSize: '0.78rem', color: '#10b981', fontWeight: 700 }}>{requestStatus?.replace('_', ' ')}</div>
+                      {hospitalEmailSent && (
+                        <div style={{ fontSize: '0.62rem', color: '#6ee7b7', fontWeight: 600, marginTop: '4px' }}>✉️ Acceptance email sent</div>
+                      )}
                     </div>
                   </div>
 

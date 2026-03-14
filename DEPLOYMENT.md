@@ -37,6 +37,13 @@ Create a **Web Service** on Render and point it to this repo.
 - `PORT=5050`
 - `CORS_ORIGINS=https://<your-frontend-domain>`
 
+### Email notification variables (Resend)
+
+- `RESEND_API_KEY=re_...`
+- `RESEND_FROM_EMAIL=Green Corridor <onboarding@resend.dev>`
+
+> For best deliverability, replace `onboarding@resend.dev` with your verified domain sender (for example `alerts@yourdomain.com`).
+
 ### Optional SMS variables (Twilio)
 
 - `SMS_PROVIDER=twilio`
@@ -52,6 +59,15 @@ After deploy, verify:
 - `https://<your-backend-domain>/api/health`
 
 Should return JSON with `success: true`.
+
+### Email check (optional but recommended)
+
+After backend deploy, test email endpoint:
+
+- `POST https://<your-backend-domain>/api/email/test`
+- JSON body: `{ "to": "your-gmail@gmail.com" }`
+
+If configured correctly, response contains `success: true` and a Resend message `id`.
 
 ---
 
