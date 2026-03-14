@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { X, Ambulance, Phone, MapPin, Activity, Clock, Navigation, Shield, Radio, AlertTriangle, Heart, Zap, Building2, ChevronDown, CheckCircle, RotateCcw } from 'lucide-react';
-import { computeSignalPreemption, computeETA, haversineDistance } from './trafficAlgorithm';
+import 'leaflet.heat';
+import { X, Ambulance, Phone, MapPin, Activity, Clock, Navigation, Shield, Radio, AlertTriangle, Heart, Zap, Building2, ChevronDown, CheckCircle, RotateCcw, GitBranch, Flame, RefreshCw } from 'lucide-react';
+import { computeSignalPreemption, computeETA, haversineDistance, generateRouteCandidates, generateCongestionZones, checkReroute } from './trafficAlgorithm';
+import JourneyReport from './JourneyReport';
 
 // ── Bangalore route ──────────────────────────────────────────
 const ROUTE_COORDS = [
@@ -74,6 +76,101 @@ function MapFollower({ position, isTracking }) {
   return null;
 }
 
+function TrafficHeatLayer({ enabled, greenSignals }) {
+  const map = useMap();
+  const layerRef = useRef(null);
+
+  const baseHeatPoints = useMemo(() => [
+    // Silk Board Junction (heavy)
+    [12.9177, 77.6238, 1.0],
+    [12.9185, 77.6244, 0.92],
+    [12.9169, 77.6227, 0.88],
+
+    // KR Puram (heavy)
+    [13.0089, 77.6959, 0.98],
+    [13.0100, 77.6972, 0.9],
+    [13.0078, 77.6946, 0.86],
+
+    // Hebbal Flyover (moderate)
+    [13.0358, 77.5970, 0.68],
+    [13.0365, 77.5981, 0.62],
+
+    // Marathahalli Bridge (heavy)
+    [12.9591, 77.6974, 0.95],
+    [12.9601, 77.6986, 0.9],
+    [12.9580, 77.6960, 0.84],
+
+    // Electronic City Toll (moderate)
+    [12.8452, 77.6602, 0.7],
+    [12.8460, 77.6614, 0.64],
+
+    // BTM Layout (moderate)
+    [12.9166, 77.6101, 0.72],
+    [12.9174, 77.6112, 0.66],
+  ], []);
+
+  const computedHeatPoints = useMemo(() => {
+    const points = [...baseHeatPoints];
+
+    // Intensify around red (non-green) signal nodes.
+    TRAFFIC_SIGNALS.forEach((sig, idx) => {
+      const isGreen = greenSignals.includes(idx);
+      if (isGreen) return;
+
+      const [lat, lng] = sig.pos;
+      points.push(
+        [lat, lng, 0.98],
+        [lat + 0.0012, lng + 0.0010, 0.85],
+        [lat - 0.0010, lng - 0.0011, 0.82],
+        [lat + 0.0009, lng - 0.0010, 0.78],
+        [lat - 0.0009, lng + 0.0010, 0.78]
+      );
+    });
+
+    return points;
+  }, [baseHeatPoints, greenSignals]);
+
+  useEffect(() => {
+    if (!map) return;
+
+    if (!map.getPane('trafficHeatPane')) {
+      const heatPane = map.createPane('trafficHeatPane');
+      heatPane.style.zIndex = '350';
+      heatPane.style.pointerEvents = 'none';
+    }
+
+    if (layerRef.current) {
+      map.removeLayer(layerRef.current);
+      layerRef.current = null;
+    }
+
+    if (!enabled) return;
+
+    layerRef.current = L.heatLayer(computedHeatPoints, {
+      pane: 'trafficHeatPane',
+      radius: 34,
+      blur: 26,
+      maxZoom: 17,
+      minOpacity: 0.22,
+      gradient: {
+        0.2: '#fde047', // yellow (light)
+        0.55: '#f59e0b', // orange (moderate)
+        0.8: '#f97316', // deep orange
+        1.0: '#ef4444', // red (heavy)
+      }
+    }).addTo(map);
+
+    return () => {
+      if (layerRef.current) {
+        map.removeLayer(layerRef.current);
+        layerRef.current = null;
+      }
+    };
+  }, [map, enabled, computedHeatPoints]);
+
+  return null;
+}
+
 // ── PHASES ────────────────────────────────────────────────────
 const PHASE = {
   FORM:             'form',
@@ -118,6 +215,18 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
   const [greenSignals, setGreenSignals]   = useState([]);
   const [greenSet, setGreenSet]           = useState(new Set());
   const [corridorActive, setCorridorActive] = useState(false);
+  const [showTrafficHeat, setShowTrafficHeat] = useState(true);
+  // AI Route Intelligence state
+  const [routeCandidates, setRouteCandidates] = useState([]);
+  const [congestionZones, setCongestionZones] = useState([]);
+  const [rerouteAlert, setRerouteAlert]       = useState(null);
+  const [showRoutesPanel, setShowRoutesPanel] = useState(true);
+  const congestionSeedRef = useRef(Date.now());
+  // Siren detection state
+  const [sirenDetections, setSirenDetections] = useState({});  // { signalIndex: [ripple timestamps] }
+  const [showReport, setShowReport]           = useState(false);
+  const [journeyData, setJourneyData]         = useState(null);
+  const journeyStartTimeRef = useRef(null);
   const animRef   = useRef(null);
   const progressRef = useRef(0);
   const geoAutoAttemptedRef = useRef(false);
@@ -137,9 +246,19 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
     });
   }, []);
 
-  // Reset ONLY if opening and there is NO active global request
+  // Track modal open transition (false → true) to distinguish
+  // a genuine "start fresh" open from an in-progress journey.
+  const wasOpenRef = useRef(false);
+
   useEffect(() => {
-    if (isOpen && !pendingRequest && phase !== PHASE.FORM) {
+    const justOpened = isOpen && !wasOpenRef.current;
+    wasOpenRef.current = isOpen;
+
+    // Only reset if the modal just opened AND the previous journey finished (ARRIVED)
+    // OR if there is genuinely no active request and we were stuck mid-phase.
+    // NEVER reset during an active submission (phase !== FORM but pendingRequest is null
+    // for just one tick while waiting for the backend to confirm).
+    if (justOpened && phase === PHASE.ARRIVED && !pendingRequest) {
       if (animRef.current) cancelAnimationFrame(animRef.current);
       setPhase(PHASE.FORM);
       setRouteProgress(0);
@@ -149,13 +268,16 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
       setGreenSet(new Set());
       setCorridorActive(false);
       setAmbulancePos(ROUTE_COORDS[0]);
+      setRouteCandidates([]);
+      setCongestionZones([]);
+      setSirenDetections({});
       progressRef.current = 0;
       setFormData({ location: 'Silk Board Junction, Bangalore', condition: 'critical', contact: '', patientName: '', hospital: '', customHospital: '' });
       setShowCustomHospital(false);
       setGeoError('');
       geoAutoAttemptedRef.current = false;
     }
-  }, [isOpen, pendingRequest, phase]);
+  }, [isOpen]); // intentionally only depend on isOpen
 
   useEffect(() => {
     if (isOpen && phase === PHASE.FORM && !pendingRequest && !geoAutoAttemptedRef.current) {
@@ -230,9 +352,16 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
   useEffect(() => {
     if (policeApproved && phase === PHASE.WAITING_POLICE) {
       setPhase(PHASE.ASSIGNED);
+      // Pre-compute route candidates and congestion zones
+      const seed = congestionSeedRef.current;
+      const candidates = generateRouteCandidates(USER_LOCATION, HOSPITAL_LOCATION, TRAFFIC_SIGNALS, USER_LOCATION, seed);
+      const zones = generateCongestionZones(seed);
+      setRouteCandidates(candidates);
+      setCongestionZones(zones);
       setTimeout(() => {
         setPhase(PHASE.TRACKING);
         setCorridorActive(true);
+        journeyStartTimeRef.current = Date.now();
         onTrackingStarted && onTrackingStarted();
         startAmbulanceMovement();
       }, 2500);
@@ -296,6 +425,27 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
       setGreenSet(new Set(newGreenSet));
       setGreenSignals(Array.from(newGreenSet));
 
+      // ── Acoustic Siren Detection ──────────────────────────
+      // When ambulance is within 200m of a signal, the roadside
+      // microphone "hears" the siren → trigger ripple animation
+      const SIREN_DETECT_RADIUS = 200; // metres
+      setSirenDetections((prev) => {
+        const next = { ...prev };
+        TRAFFIC_SIGNALS.forEach((sig, i) => {
+          const dist = haversineDistance(pos, sig.pos);
+          if (dist <= SIREN_DETECT_RADIUS) {
+            const existing = prev[i] || [];
+            const now = Date.now();
+            // Add a new ripple every 1.5s while inside detection zone
+            const lastRipple = existing[existing.length - 1] || 0;
+            if (now - lastRipple > 1500) {
+              next[i] = [...existing.slice(-3), now]; // keep last 4 ripples
+            }
+          }
+        });
+        return next;
+      });
+
       // ETA via algorithm
       const remaining = ROUTE_COORDS.slice(Math.max(0, idx));
       const { etaMinutes } = computeETA(pos, remaining, 40, newGreenSet.size);
@@ -303,10 +453,34 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
       setDistance(Math.max(0, parseFloat((4.2 * (1 - easedT)).toFixed(1))));
       progressRef.current = easedT;
 
+      // Check dynamic reroute every ~5% progress
+      if (Math.round(easedT * 20) % 4 === 1) {
+        setRouteCandidates((prev) => {
+          const { shouldReroute, reason, alternateRoute } = checkReroute(pos, remaining, prev, TRAFFIC_SIGNALS, newGreenSet);
+          if (shouldReroute && reason) {
+            setRerouteAlert({ reason, alternate: alternateRoute });
+            setTimeout(() => setRerouteAlert(null), 5000);
+          }
+          return prev;
+        });
+      }
+
       if (t < 1) {
         animRef.current = requestAnimationFrame(animate);
       } else {
+        // Journey complete — generate report
+        const totalMin = journeyStartTimeRef.current
+          ? Math.ceil((Date.now() - journeyStartTimeRef.current) / 60000)
+          : 6;
+        setJourneyData({
+          greenSignalCount: currentGreenSet.size,
+          totalSignals: TRAFFIC_SIGNALS.length,
+          distanceKm: 4.2,
+          actualMinutes: Math.max(4, Math.min(8, totalMin)),
+          condition: 'critical',
+        });
         setPhase(PHASE.ARRIVED);
+        setTimeout(() => setShowReport(true), 2500); // Show report after arrival banner
       }
     };
 
@@ -319,6 +493,7 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
   const isTracking = phase === PHASE.TRACKING || phase === PHASE.ARRIVED;
 
   return (
+    <>
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000,
       background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
@@ -622,12 +797,65 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
                 style={{ height: '100%', width: '100%' }} zoomControl={false}>
                 <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution="&copy; CARTO" />
                 <MapFollower position={ambulancePos} isTracking={isTracking} />
+                <TrafficHeatLayer enabled={showTrafficHeat} greenSignals={greenSignals} />
+
+                {/* ── Congestion Heatmap Circles ── */}
+                {congestionZones.map((zone, i) => (
+                  <CircleMarker
+                    key={`congestion-${i}`}
+                    center={zone.center}
+                    radius={zone.radiusM / 15}
+                    pathOptions={{
+                      color: zone.intensity > 0.6 ? '#ef4444' : zone.intensity > 0.35 ? '#f97316' : '#eab308',
+                      fillColor: zone.intensity > 0.6 ? '#ef4444' : zone.intensity > 0.35 ? '#f97316' : '#eab308',
+                      fillOpacity: zone.intensity * 0.25,
+                      weight: 1,
+                      opacity: 0.5,
+                    }}
+                  >
+                    <Popup><b>🔥 {zone.label}</b><br />Congestion: {Math.round(zone.intensity * 100)}%</Popup>
+                  </CircleMarker>
+                ))}
+
+                {/* ── Alternate Route Candidates (behind active route) ── */}
+                {routeCandidates.filter(r => !r.isActive).map((route) => (
+                  <Polyline
+                    key={`alt-${route.id}`}
+                    positions={route.coords}
+                    pathOptions={{ color: route.color, weight: 3, opacity: 0.45, dashArray: '6,8' }}
+                  />
+                ))}
+
+                {/* ── Active (primary) route ── */}
                 <Polyline positions={remainingRoute} pathOptions={{ color: 'rgba(100,116,139,0.4)', weight: 4, dashArray: '8,8' }} />
                 {corridorActive && completedRoute.length > 1 && (<>
                   <Polyline positions={completedRoute} pathOptions={{ color: '#10b981', weight: 6, opacity: 0.9 }} />
                   <Polyline positions={completedRoute} pathOptions={{ color: '#10b981', weight: 16, opacity: 0.15 }} />
                 </>)}
                 <Polyline positions={ROUTE_COORDS} pathOptions={{ color: '#10b981', weight: 20, opacity: 0.05 }} />
+
+                {/* ── Siren Acoustic Detection Ripples ── */}
+                {Object.entries(sirenDetections).map(([sigIdxStr, ripples]) => {
+                  const sigIdx = parseInt(sigIdxStr);
+                  const sig = TRAFFIC_SIGNALS[sigIdx];
+                  if (!sig) return null;
+                  return ripples.map((ts, ri) => (
+                    <CircleMarker
+                      key={`siren-${sigIdx}-${ts}-${ri}`}
+                      center={sig.pos}
+                      radius={12 + ri * 8}
+                      pathOptions={{
+                        color: '#06b6d4',
+                        fillColor: 'transparent',
+                        weight: 2,
+                        opacity: Math.max(0, 0.7 - ri * 0.2),
+                        className: 'siren-ripple',
+                      }}
+                    />
+                  ));
+                })}
+
+                {/* ── Traffic signals ── */}
                 {TRAFFIC_SIGNALS.map((sig, i) => (
                   <CircleMarker key={i} center={sig.pos} radius={8}
                     pathOptions={{ color: greenSignals.includes(i) ? '#10b981' : '#ef4444', fillColor: greenSignals.includes(i) ? '#10b981' : '#ef4444', fillOpacity: 0.8, weight: 2 }}>
@@ -645,7 +873,7 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
                 </Marker>
               </MapContainer>
 
-              {corridorActive && phase === PHASE.TRACKING && (
+                {corridorActive && phase === PHASE.TRACKING && (
                 <div style={{
                   position: 'absolute', top: '16px', left: '50%', transform: 'translateX(-50%)',
                   zIndex: 1000, padding: '10px 24px', borderRadius: '50px',
@@ -658,6 +886,28 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
                   <Shield style={{ width: 18, height: 18 }} />
                   GREEN CORRIDOR ACTIVE
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', animation: 'pulse-glow 1s ease-in-out infinite' }} />
+                </div>
+              )}
+
+              {/* ── Reroute Alert Banner ── */}
+              {rerouteAlert && (
+                <div style={{
+                  position: 'absolute', top: '60px', left: '12px', right: '12px', zIndex: 1100,
+                  padding: '10px 16px', borderRadius: '12px',
+                  background: 'rgba(239,68,68,0.15)', backdropFilter: 'blur(12px)',
+                  border: '1px solid rgba(239,68,68,0.4)',
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                }}>
+                  <RefreshCw style={{ width: 16, height: 16, color: '#fca5a5', flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#fca5a5' }}>⚠️ Reroute Suggested</div>
+                    <div style={{ fontSize: '0.65rem', color: 'rgba(252,165,165,0.7)', marginTop: 2 }}>{rerouteAlert.reason}</div>
+                  </div>
+                  {rerouteAlert.alternate && (
+                    <span style={{ fontSize: '0.65rem', color: rerouteAlert.alternate.color, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      → {rerouteAlert.alternate.label}
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -678,6 +928,50 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
                   </div>
                 </div>
               )}
+
+              <button
+                onClick={() => setShowTrafficHeat((prev) => !prev)}
+                style={{
+                  position: 'absolute', top: '16px', right: '16px', zIndex: 1200,
+                  padding: '8px 14px', borderRadius: '12px',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  background: showTrafficHeat ? 'rgba(239,68,68,0.14)' : 'rgba(15,23,42,0.7)',
+                  color: showTrafficHeat ? '#fca5a5' : '#93c5fd',
+                  fontFamily: 'Inter', fontWeight: 700, fontSize: '0.78rem',
+                  backdropFilter: 'blur(10px)',
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  cursor: 'pointer',
+                }}
+              >
+                <Flame style={{ width: 14, height: 14 }} />
+                Traffic Heat
+              </button>
+
+              {showTrafficHeat && (
+                <div
+                  style={{
+                    position: 'absolute', top: '56px', right: '16px', zIndex: 1199,
+                    padding: '8px 10px', borderRadius: '10px',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    background: 'rgba(15,23,42,0.72)',
+                    color: '#cbd5e1', fontFamily: 'Inter', fontSize: '0.68rem',
+                    backdropFilter: 'blur(10px)',
+                    display: 'flex', flexDirection: 'column', gap: '5px',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, color: '#e2e8f0', marginBottom: '2px' }}>Congestion</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', display: 'inline-block' }} /> 🔴 Heavy
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f59e0b', display: 'inline-block' }} /> 🟠 Moderate
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fde047', display: 'inline-block' }} /> 🟡 Light
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Right panel */}
@@ -686,6 +980,57 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
               borderLeft: '1px solid rgba(255,255,255,0.06)',
               display: 'flex', flexDirection: 'column', gap: '14px',
             }}>
+
+              {/* ── AI Route Intelligence Panel ── */}
+              {routeCandidates.length > 0 && (
+                <div style={{ padding: '14px', borderRadius: '14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <h4 style={{ fontSize: '0.7rem', color: '#818cf8', margin: 0, letterSpacing: '0.1em', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <GitBranch style={{ width: 12, height: 12 }} /> AI ROUTE INTELLIGENCE
+                    </h4>
+                    <button
+                      onClick={() => setShowRoutesPanel(p => !p)}
+                      style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '0.65rem', padding: 0 }}
+                    >
+                      {showRoutesPanel ? 'hide' : 'show'}
+                    </button>
+                  </div>
+                  {showRoutesPanel && routeCandidates.map((route) => (
+                    <div
+                      key={route.id}
+                      style={{
+                        padding: '8px 10px', borderRadius: '10px', marginBottom: '6px',
+                        background: route.isActive ? 'rgba(16,185,129,0.08)' : 'rgba(255,255,255,0.02)',
+                        border: `1px solid ${route.isActive ? 'rgba(16,185,129,0.25)' : 'rgba(255,255,255,0.05)'}`,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: route.color, display: 'inline-block', flexShrink: 0 }} />
+                          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: route.isActive ? '#e2e8f0' : '#94a3b8' }}>
+                            {route.id}. {route.label}
+                          </span>
+                          {route.isActive && (
+                            <span style={{ fontSize: '0.55rem', padding: '1px 6px', borderRadius: '50px', background: 'rgba(16,185,129,0.15)', color: '#10b981', fontWeight: 700 }}>ACTIVE</span>
+                          )}
+                        </div>
+                        <span style={{
+                          fontSize: '0.7rem', fontWeight: 800,
+                          color: route.confidence >= 75 ? '#10b981' : route.confidence >= 55 ? '#f59e0b' : '#f87171'
+                        }}>
+                          {route.confidence}%
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.63rem', color: '#64748b', marginBottom: '4px' }}>{route.description}</div>
+                      <div style={{ display: 'flex', gap: '8px', fontSize: '0.6rem', color: '#475569' }}>
+                        <span>🕐 {Math.ceil(route.totalSec / 60)}m</span>
+                        <span>📏 {(route.distanceM / 1000).toFixed(1)}km</span>
+                        {route.congestionSec > 0 && <span style={{ color: '#f97316' }}>🔥 +{Math.round(route.congestionSec)}s delay</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* ETA */}
               <div style={{
                 padding: '20px', borderRadius: '14px',
@@ -764,9 +1109,19 @@ export default function AmbulanceSimulation({ isOpen, onClose, onSubmitRequest, 
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes pulse-glow { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
         @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes sirenRipple { 0% { stroke-opacity: 0.8; r: 8; } 100% { stroke-opacity: 0; r: 60; } }
+        .siren-ripple { animation: sirenRipple 1.4s ease-out forwards; }
         .leaflet-container { background: #0a0e17 !important; }
         select option { background: #0f141e; color: #e2e8f0; }
       `}</style>
     </div>
+
+    {/* ── Post-Journey Analytics Report ── */}
+    <JourneyReport
+      isOpen={showReport}
+      onClose={() => setShowReport(false)}
+      journeyData={journeyData}
+    />
+    </>
   );
 }
